@@ -23,8 +23,8 @@ transform = transforms.Compose([
 ])
 
 # データセットパス
-train_dir = 'dataset/fer2013/train'
-test_dir = 'dataset/fer2013/test'
+train_dir = '../dataset/fer2013/train'
+test_dir = '../dataset/fer2013/test'
 
 # ImageFolderでデータセット作成
 train_dataset = datasets.ImageFolder(root=train_dir, transform=transform)

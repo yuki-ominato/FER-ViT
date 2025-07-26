@@ -345,7 +345,7 @@ __email__ = "your.email@example.com"
 
 if __name__ == "__main__":
     # ライブラリ単体でのテスト実行
-    root_dir = "dataset/fer2013"
+    root_dir = "../dataset/fer2013"
     
     print("FER2013前処理ライブラリのテスト実行")
     print(f"Version: {__version__}")
