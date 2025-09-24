@@ -80,6 +80,10 @@ class FER2013Dataset(Dataset):
         labels = [item[1] for item in self.data_list]
         return Counter(labels)
 
+def class_name_to_label(name: str):
+    mapping = {'angry':0,'disgust':1,'fear':2,'happy':3,'neutral':4,'sad':5,'surprise':6}
+    return mapping.get(name, -1)
+
 def get_fer2013_transforms(input_size=224, augment=True):
     """FER2013用データ変換パイプラインを定義"""
     
