@@ -1,4 +1,4 @@
-name: research2
+name: fer-vit
 channels:
   - pytorch
   - nvidia
