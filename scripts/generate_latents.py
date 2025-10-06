@@ -1,3 +1,4 @@
+import sys
 import os
 import argparse
 from typing import List
@@ -6,7 +7,17 @@ from PIL import Image
 from tqdm import tqdm
 import torch
 
-from models.encoder_wrapper import EncoderWrapper
+# このスクリプト(generate_latents.py)の絶対パスを取得
+current_file_path = os.path.abspath(__file__)
+# このスクリプトが置かれているディレクトリ(scripts)のパスを取得
+scripts_dir = os.path.dirname(current_file_path)
+# さらにその親ディレクトリ(プロジェクトルート fer-vit)のパスを取得
+project_root = os.path.dirname(scripts_dir)
+
+# プロジェクトルートをPythonの検索パスリストに追加
+sys.path.append(project_root)
+
+from models_fer_vit.encoder_wrapper import EncoderWrapper
 
 
 CLASS_TO_LABEL = {
