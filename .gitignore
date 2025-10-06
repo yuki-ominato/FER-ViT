@@ -196,3 +196,6 @@ cython_debug/
 # script
 debug.py
 /data
+
+# pretrained_models
+pretrained_models/
