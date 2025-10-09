@@ -199,3 +199,6 @@ debug.py
 
 # pretrained_models
 pretrained_models/
+
+# latents
+latents/

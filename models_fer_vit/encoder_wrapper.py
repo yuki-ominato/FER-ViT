@@ -45,6 +45,7 @@ class EncoderWrapper:
         else:
             raise ValueError(f"Unsupported encoder type: {self.encoder_type}")
 
+    # --- 変更 1: _load_psp 内でモデルを device に移動する ---
     def _load_psp(self):
         """pSpエンコーダをロード"""
         try:
@@ -82,14 +83,17 @@ class EncoderWrapper:
             # モデルをロード
             print(f"[DEBUG] Creating pSp model...")
             model = pSp(opts)
+            # 重要: モデルを明示的に device に移動する
+            model.to(self.device)
             model.eval()
-            print(f"[DEBUG] pSp model loaded successfully")
+            print(f"[DEBUG] pSp model loaded successfully on device {self.device}")
             return model
             
         except ImportError as e:
             print(f"pSp import error: {e}")
             print("Please ensure pixel2style2pixel is in third_party/pixel2style2pixel")
             raise RuntimeError("pSp not available. Please install pixel2style2pixel.")
+
     # def _load_e4e(self):
     #     """e4eエンコーダをロード"""
     #     try:
@@ -128,22 +132,28 @@ class EncoderWrapper:
     #         print("Please ensure encoder4editing is in third_party/encoder4editing")
     #         raise RuntimeError("e4e not available. Please install encoder4editing.")
 
+    # --- 変更 2: preprocess は unsqueeze を行わず [C,H,W] を返す ---
     def preprocess(self, pil_image: Image.Image, resize: int = 256) -> torch.Tensor:
-        """画像の前処理"""
+        """画像の前処理（戻り値は tensor [C,H,W]、device に転送済み）"""
         tf = transforms.Compose([
             transforms.Resize((resize, resize)),
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
         ])
-        return tf(pil_image).unsqueeze(0).to(self.device)
+        # ここで unsqueeze はしない（一貫して [C,H,W] を返す）
+        t = tf(pil_image)
+        return t.to(self.device)
 
+
+    # --- 変更 3: encode_image は preprocess の後でバッチ次元を付与して渡す ---
     @torch.no_grad()
     def encode_image(self, pil_image: Image.Image) -> torch.Tensor:
         """画像を潜在コードにエンコード"""
         if self.encoder is None:
             raise RuntimeError("Encoder not loaded.")
             
-        x = self.preprocess(pil_image)
+        # preprocess は [C,H,W] を返すのでバッチ次元を付与
+        x = self.preprocess(pil_image).unsqueeze(0)  # -> [1, C, H, W]
         
         if self.encoder_type == "psp":
             # pSpの推論（エンコーダ部分のみを使用）
@@ -158,7 +168,6 @@ class EncoderWrapper:
             return codes.detach().cpu()
             
         elif self.encoder_type == "e4e":
-            # e4eの推論（pSpと同様の構造を想定）
             codes = self.encoder.encoder(x)
             if self.encoder.opts.start_from_latent_avg:
                 if self.encoder.opts.learn_in_w:
@@ -170,13 +179,17 @@ class EncoderWrapper:
         else:
             raise ValueError(f"Unsupported encoder type: {self.encoder_type}")
 
+
+    # --- 変更 4: encode_batch の stacking を正す（preprocess は [C,H,W] を返すため） ---
     def encode_batch(self, pil_images: list, batch_size: int = 4) -> torch.Tensor:
+
         """バッチで画像をエンコード（メモリ効率化）"""
         all_latents = []
         
         for i in range(0, len(pil_images), batch_size):
             batch_images = pil_images[i:i + batch_size]
-            batch_tensors = torch.stack([self.preprocess(img) for img in batch_images])
+            # preprocess returns [C,H,W] so stack -> [B,C,H,W]
+            batch_tensors = torch.stack([self.preprocess(img) for img in batch_images], dim=0)
             
             with torch.no_grad():
                 if self.encoder_type == "psp":
@@ -202,6 +215,8 @@ class EncoderWrapper:
             
             all_latents.append(latents.detach().cpu())
         
+        print(f"[DEBUG] batch_tensors.shape={batch_tensors.shape}, device={batch_tensors.device}, dtype={batch_tensors.dtype}")
+        p = next(self.encoder.parameters()); print(f"[DEBUG] encoder param device={p.device}, dtype={p.dtype}")
         return torch.cat(all_latents, dim=0)
 
 

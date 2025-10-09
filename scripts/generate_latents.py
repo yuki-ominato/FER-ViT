@@ -6,6 +6,7 @@ from typing import List
 from PIL import Image
 from tqdm import tqdm
 import torch
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # このスクリプト(generate_latents.py)の絶対パスを取得
 current_file_path = os.path.abspath(__file__)
@@ -30,6 +31,24 @@ CLASS_TO_LABEL = {
     "surprise": 6,
 }
 
+def prepare_images_for_model(imgs, model):
+    # imgs が list なら積んで tensor にする
+    if isinstance(imgs, list):
+        imgs = torch.stack(imgs, dim=0)
+
+    # もし5次元（例 [B,1,C,H,W]）なら余分な次元を潰す
+    if imgs.dim() == 5:
+        # よくあるケース: [B, 1, C, H, W]
+        if imgs.size(1) == 1:
+            imgs = imgs.squeeze(1)  # -> [B, C, H, W]
+        # まれに [B, C, 1, H, W] のような順序のミスがあるなら別条件も追加可能
+
+    # デバイス合わせと dtype合わせ（モデルのパラメータの dtype に合わせる）
+    model_param = next(model.parameters())
+    target_dtype = model_param.dtype
+    imgs = imgs.to(device=device, dtype=target_dtype)
+
+    return imgs
 
 def process_images_batch(encoder: EncoderWrapper, image_paths: List[str], 
                         labels: List[int], output_paths: List[str], 
@@ -55,7 +74,8 @@ def process_images_batch(encoder: EncoderWrapper, image_paths: List[str],
         
         if not pil_images:
             continue
-            
+
+        print(f"Encoding {len(pil_images)} images")
         # バッチエンコード
         try:
             latents = encoder.encode_batch(pil_images, batch_size=len(pil_images))
