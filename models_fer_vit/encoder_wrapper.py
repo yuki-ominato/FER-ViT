@@ -215,8 +215,8 @@ class EncoderWrapper:
             
             all_latents.append(latents.detach().cpu())
         
-        print(f"[DEBUG] batch_tensors.shape={batch_tensors.shape}, device={batch_tensors.device}, dtype={batch_tensors.dtype}")
-        p = next(self.encoder.parameters()); print(f"[DEBUG] encoder param device={p.device}, dtype={p.dtype}")
+        # print(f"[DEBUG] batch_tensors.shape={batch_tensors.shape}, device={batch_tensors.device}, dtype={batch_tensors.dtype}")
+        # p = next(self.encoder.parameters()); print(f"[DEBUG] encoder param device={p.device}, dtype={p.dtype}")
         return torch.cat(all_latents, dim=0)
 
 
