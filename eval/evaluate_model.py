@@ -1,11 +1,14 @@
 """
-評価・可視化スクリプト
+評価・可視化スクリプト（改善版）
 学習済みモデルの詳細評価とAttention可視化を行う
 """
 
 import os
+import sys
 import argparse
 import json
+import matplotlib
+matplotlib.use('Agg')  # GUIなし環境対応
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
@@ -13,20 +16,48 @@ import torch
 from sklearn.metrics import confusion_matrix, classification_report
 from torch.utils.data import DataLoader
 
+# プロジェクトルートをパスに追加
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 from data.latent_dataset import LatentFERDataset
-from models.latent_vit import LatentViT
+from models_fer_vit.latent_vit import LatentViT
 
 
 def load_model(checkpoint_path: str, device: str = "cuda"):
     """学習済みモデルをロード"""
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     
-    # 設定を取得
+    # PyTorch 2.6以降の互換性対応
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    except TypeError:
+        # PyTorch 2.5以前の場合
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    # 設定を取得（複数のキー名に対応）
     if 'config' in checkpoint:
         config = checkpoint['config']
-        model_config = config['model']
+        model_config = config.get('model', config)
+    elif 'args' in checkpoint:
+        # train_latent_vit_simple.pyからのチェックポイント
+        args = checkpoint['args']
+        model_config = {
+            'latent_dim': args.latent_dim,
+            'seq_len': args.seq_len,
+            'embed_dim': args.embed_dim,
+            'depth': args.depth,
+            'heads': args.heads,
+            'mlp_dim': args.mlp_dim,
+            'num_classes': args.num_classes,
+            'dropout': args.dropout,
+        }
     else:
         # デフォルト設定
+        print("Warning: Config not found in checkpoint, using default values")
         model_config = {
             'latent_dim': 512,
             'seq_len': 18,
@@ -40,8 +71,22 @@ def load_model(checkpoint_path: str, device: str = "cuda"):
     
     # モデル初期化
     model = LatentViT(**model_config).to(device)
-    model.load_state_dict(checkpoint['model_state'])
+    
+    # state_dictのキー名に対応
+    if 'model_state_dict' in checkpoint:
+        model.load_state_dict(checkpoint['model_state_dict'])
+    elif 'model_state' in checkpoint:
+        model.load_state_dict(checkpoint['model_state'])
+    else:
+        raise KeyError("Model state dict not found in checkpoint")
+    
     model.eval()
+    
+    # エポック情報を取得
+    epoch_info = checkpoint.get('epoch', 'unknown')
+    print(f"Loaded model from epoch {epoch_info}")
+    if 'metrics' in checkpoint:
+        print(f"Checkpoint metrics: {checkpoint['metrics']}")
     
     return model, model_config
 
@@ -77,17 +122,30 @@ def plot_confusion_matrix(y_true, y_pred, class_names, save_path=None):
     """混同行列を可視化"""
     cm = confusion_matrix(y_true, y_pred)
     
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                xticklabels=class_names, yticklabels=class_names)
-    plt.title('Confusion Matrix')
-    plt.xlabel('Predicted')
-    plt.ylabel('Actual')
+    # 正規化版と生データ版の両方を表示
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # 正規化版
+    cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+    sns.heatmap(cm_normalized, annot=True, fmt='.2%', cmap='Blues', 
+                xticklabels=class_names, yticklabels=class_names, ax=ax1)
+    ax1.set_title('Confusion Matrix (Normalized)')
+    ax1.set_xlabel('Predicted')
+    ax1.set_ylabel('Actual')
+    
+    # 生データ版
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Greens', 
+                xticklabels=class_names, yticklabels=class_names, ax=ax2)
+    ax2.set_title('Confusion Matrix (Counts)')
+    ax2.set_xlabel('Predicted')
+    ax2.set_ylabel('Actual')
+    
     plt.tight_layout()
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.show()
+        print(f"Confusion matrix saved to: {save_path}")
+    plt.close()
 
 
 def plot_class_metrics(y_true, y_pred, class_names, save_path=None):
@@ -111,7 +169,7 @@ def plot_class_metrics(y_true, y_pred, class_names, save_path=None):
     
     fig, ax = plt.subplots(figsize=(12, 6))
     for i, metric in enumerate(metrics):
-        ax.bar(x + i * width, data[metric], width, label=metric)
+        ax.bar(x + i * width, data[metric], width, label=metric.capitalize())
     
     ax.set_xlabel('Emotion Classes')
     ax.set_ylabel('Score')
@@ -120,19 +178,18 @@ def plot_class_metrics(y_true, y_pred, class_names, save_path=None):
     ax.set_xticklabels(classes, rotation=45)
     ax.legend()
     ax.grid(True, alpha=0.3)
+    ax.set_ylim([0, 1.0])
     
     plt.tight_layout()
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.show()
+        print(f"Class metrics saved to: {save_path}")
+    plt.close()
 
 
 def visualize_attention(model, sample_latent, device, save_path=None):
-    """Attention重みを可視化"""
+    """Attention重みを可視化（簡易版）"""
     model.eval()
-    
-    # 注意：実際のAttention重みを取得するには、モデルを改造する必要があります
-    # ここでは簡易版として、CLSトークンと各潜在トークンの類似度を計算
     
     with torch.no_grad():
         sample_latent = sample_latent.unsqueeze(0).to(device)  # (1, L, D)
@@ -157,75 +214,67 @@ def visualize_attention(model, sample_latent, device, save_path=None):
         ).squeeze(0)  # (L,)
         
         # 可視化
-        plt.figure(figsize=(12, 6))
-        plt.bar(range(len(similarities)), similarities.cpu().numpy())
-        plt.xlabel('Latent Token Index')
-        plt.ylabel('Cosine Similarity with CLS Token')
-        plt.title('Attention-like Visualization: CLS Token Similarity to Latent Tokens')
-        plt.grid(True, alpha=0.3)
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+        
+        # 棒グラフ
+        ax1.bar(range(len(similarities)), similarities.cpu().numpy())
+        ax1.set_xlabel('Latent Token Index (StyleGAN Layer)')
+        ax1.set_ylabel('Cosine Similarity with CLS Token')
+        ax1.set_title('Attention-like Visualization: CLS Token Similarity')
+        ax1.grid(True, alpha=0.3)
+        ax1.axhline(y=0, color='r', linestyle='--', alpha=0.5)
+        
+        # ヒートマップ（トークン間の類似度）
+        token_similarities = torch.cosine_similarity(
+            latent_tokens.unsqueeze(2), latent_tokens.unsqueeze(1), dim=3
+        ).squeeze(0).cpu().numpy()
+        
+        sns.heatmap(token_similarities, cmap='coolwarm', center=0, ax=ax2,
+                   xticklabels=range(len(similarities)), 
+                   yticklabels=range(len(similarities)))
+        ax2.set_title('Token-to-Token Similarity Matrix')
+        ax2.set_xlabel('Token Index')
+        ax2.set_ylabel('Token Index')
+        
+        plt.tight_layout()
         
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.show()
+            print(f"Attention visualization saved to: {save_path}")
+        plt.close()
         
         return similarities.cpu().numpy()
 
 
-def plot_training_curves(checkpoint_dir, save_path=None):
-    """学習曲線を可視化"""
-    # チェックポイントから学習履歴を復元
-    train_losses = []
-    val_accuracies = []
-    val_f1_scores = []
-    epochs = []
+def plot_prediction_confidence(probabilities, labels, predictions, save_path=None):
+    """予測信頼度の分布を可視化"""
+    # 正解/不正解ごとの信頼度
+    correct_mask = labels == predictions
+    correct_conf = np.max(probabilities[correct_mask], axis=1)
+    incorrect_conf = np.max(probabilities[~correct_mask], axis=1)
     
-    for epoch in range(1, 100):  # 最大100エポックまで確認
-        ckpt_path = os.path.join(checkpoint_dir, f"latent_vit_epoch{epoch}.pt")
-        if os.path.exists(ckpt_path):
-            checkpoint = torch.load(ckpt_path, map_location='cpu')
-            train_losses.append(checkpoint.get('train_loss', 0))
-            val_metrics = checkpoint.get('val_metrics', {})
-            val_accuracies.append(val_metrics.get('accuracy', 0))
-            val_f1_scores.append(val_metrics.get('f1_macro', 0))
-            epochs.append(epoch)
-        else:
-            break
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
     
-    if not epochs:
-        print("No training checkpoints found.")
-        return
-    
-    # プロット
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
-    
-    # 学習損失
-    ax1.plot(epochs, train_losses, 'b-', label='Train Loss')
-    ax1.set_xlabel('Epoch')
-    ax1.set_ylabel('Loss')
-    ax1.set_title('Training Loss')
+    # ヒストグラム
+    ax1.hist(correct_conf, bins=20, alpha=0.7, label='Correct', color='green')
+    ax1.hist(incorrect_conf, bins=20, alpha=0.7, label='Incorrect', color='red')
+    ax1.set_xlabel('Prediction Confidence')
+    ax1.set_ylabel('Count')
+    ax1.set_title('Prediction Confidence Distribution')
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
-    # 検証精度
-    ax2.plot(epochs, val_accuracies, 'g-', label='Val Accuracy')
-    ax2.set_xlabel('Epoch')
-    ax2.set_ylabel('Accuracy')
-    ax2.set_title('Validation Accuracy')
-    ax2.legend()
+    # ボックスプロット
+    ax2.boxplot([correct_conf, incorrect_conf], labels=['Correct', 'Incorrect'])
+    ax2.set_ylabel('Prediction Confidence')
+    ax2.set_title('Confidence Comparison')
     ax2.grid(True, alpha=0.3)
-    
-    # F1スコア
-    ax3.plot(epochs, val_f1_scores, 'r-', label='Val F1 Macro')
-    ax3.set_xlabel('Epoch')
-    ax3.set_ylabel('F1 Score')
-    ax3.set_title('Validation F1 Macro')
-    ax3.legend()
-    ax3.grid(True, alpha=0.3)
     
     plt.tight_layout()
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.show()
+        print(f"Confidence plot saved to: {save_path}")
+    plt.close()
 
 
 def main():
@@ -234,6 +283,9 @@ def main():
     parser.add_argument("--latent_test_dir", required=True, help="Path to test latent files")
     parser.add_argument("--output_dir", default="eval_results", help="Output directory for results")
     parser.add_argument("--device", default="cuda", help="Device to use")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for evaluation")
+    parser.add_argument("--visualize_samples", type=int, default=5, 
+                       help="Number of samples to visualize attention for")
     
     args = parser.parse_args()
     
@@ -242,20 +294,29 @@ def main():
     
     # デバイス設定
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
     
     # モデルロード
+    print("\n" + "="*60)
     print("Loading model...")
+    print("="*60)
     model, model_config = load_model(args.checkpoint_path, device)
-    print(f"Model loaded from {args.checkpoint_path}")
+    print(f"Model configuration: {json.dumps(model_config, indent=2)}")
     
     # データローダー作成
+    print("\n" + "="*60)
+    print("Loading test dataset...")
+    print("="*60)
     test_dataset = LatentFERDataset(args.latent_test_dir)
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, 
+                            shuffle=False, num_workers=4)
     
     print(f"Test dataset size: {len(test_dataset)}")
     
     # 評価実行
+    print("\n" + "="*60)
     print("Evaluating model...")
+    print("="*60)
     results = evaluate_model(model, test_loader, device)
     
     # クラス名
@@ -263,15 +324,22 @@ def main():
     
     # 基本メトリクス
     accuracy = np.mean(results['predictions'] == results['labels'])
-    print(f"\nTest Accuracy: {accuracy:.4f}")
+    print(f"\n{'='*60}")
+    print(f"TEST RESULTS")
+    print(f"{'='*60}")
+    print(f"Overall Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
     
     # 分類レポート
-    print("\nClassification Report:")
+    print("\n" + "="*60)
+    print("Classification Report:")
+    print("="*60)
     print(classification_report(results['labels'], results['predictions'], 
-                              target_names=emotion_names))
+                              target_names=emotion_names, digits=4))
     
     # 可視化
-    print("\nGenerating visualizations...")
+    print("\n" + "="*60)
+    print("Generating visualizations...")
+    print("="*60)
     
     # 混同行列
     plot_confusion_matrix(
@@ -285,21 +353,21 @@ def main():
         save_path=os.path.join(args.output_dir, 'class_metrics.png')
     )
     
+    # 予測信頼度
+    plot_prediction_confidence(
+        results['probabilities'], results['labels'], results['predictions'],
+        save_path=os.path.join(args.output_dir, 'prediction_confidence.png')
+    )
+    
     # Attention可視化（サンプル）
     if len(test_dataset) > 0:
-        sample_latent, _ = test_dataset[0]
-        similarities = visualize_attention(
-            model, sample_latent, device,
-            save_path=os.path.join(args.output_dir, 'attention_visualization.png')
-        )
-        print(f"Attention similarities: {similarities}")
-    
-    # 学習曲線（チェックポイントディレクトリから）
-    checkpoint_dir = os.path.dirname(args.checkpoint_path)
-    plot_training_curves(
-        checkpoint_dir,
-        save_path=os.path.join(args.output_dir, 'training_curves.png')
-    )
+        print(f"\nVisualizing attention for {args.visualize_samples} samples...")
+        for i in range(min(args.visualize_samples, len(test_dataset))):
+            sample_latent, sample_label = test_dataset[i]
+            similarities = visualize_attention(
+                model, sample_latent, device,
+                save_path=os.path.join(args.output_dir, f'attention_sample_{i}.png')
+            )
     
     # 結果をJSONで保存
     results_summary = {
@@ -309,12 +377,19 @@ def main():
             target_names=emotion_names, output_dict=True
         ),
         'model_config': model_config,
+        'checkpoint_path': args.checkpoint_path,
+        'test_dataset_size': len(test_dataset),
     }
     
-    with open(os.path.join(args.output_dir, 'evaluation_results.json'), 'w') as f:
+    results_path = os.path.join(args.output_dir, 'evaluation_results.json')
+    with open(results_path, 'w') as f:
         json.dump(results_summary, f, indent=2)
     
-    print(f"\nEvaluation completed. Results saved to {args.output_dir}")
+    print(f"\n{'='*60}")
+    print(f"Evaluation completed!")
+    print(f"Results saved to: {args.output_dir}")
+    print(f"Summary: {results_path}")
+    print(f"{'='*60}")
 
 
 if __name__ == "__main__":

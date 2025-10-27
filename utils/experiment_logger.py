@@ -73,7 +73,7 @@ class ExperimentLogger:
         self.writer.add_hparams(hparams, metrics)
     
     def log_confusion_matrix(self, y_true: np.ndarray, y_pred: np.ndarray, 
-                           class_names: list, epoch: int):
+                        class_names: list, epoch: int):
         """混同行列をログ"""
         from sklearn.metrics import confusion_matrix
         cm = confusion_matrix(y_true, y_pred)
@@ -81,34 +81,47 @@ class ExperimentLogger:
         # 正規化
         cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
         
-        # TensorBoardに記録
-        self.writer.add_figure(
-            f"Confusion_Matrix/Epoch_{epoch}",
-            self._plot_confusion_matrix(cm_normalized, class_names),
-            epoch
-        )
+        # プロットを生成
+        fig = self._plot_confusion_matrix(cm_normalized, class_names)
+        
+        # Noneでない場合のみTensorBoardに記録
+        if fig is not None:
+            self.writer.add_figure(
+                f"Confusion_Matrix/Epoch_{epoch}",
+                fig,
+                epoch
+            )
+        else:
+            print(f"Skipping confusion matrix visualization for epoch {epoch}")
+
     
     def _plot_confusion_matrix(self, cm: np.ndarray, class_names: list):
         """混同行列のプロット"""
         try:
+            import matplotlib
+            matplotlib.use('Agg')  # GUIなし環境対応
             import matplotlib.pyplot as plt
             import seaborn as sns
-        except ImportError:
-            print("Warning: seaborn not available, skipping confusion matrix plot")
+        except ImportError as e:
+            print(f"Warning: Required visualization library not available ({e}), skipping confusion matrix plot")
             return None
         
-        fig, ax = plt.subplots(figsize=(8, 6))
-        sns.heatmap(cm, annot=True, fmt='.2f', cmap='Blues',
-                   xticklabels=class_names, yticklabels=class_names, ax=ax)
-        ax.set_title('Confusion Matrix')
-        ax.set_xlabel('Predicted')
-        ax.set_ylabel('Actual')
-        plt.tight_layout()
-        return fig
+        try:
+            fig, ax = plt.subplots(figsize=(8, 6))
+            sns.heatmap(cm, annot=True, fmt='.2f', cmap='Blues',
+                    xticklabels=class_names, yticklabels=class_names, ax=ax)
+            ax.set_title('Confusion Matrix')
+            ax.set_xlabel('Predicted')
+            ax.set_ylabel('Actual')
+            plt.tight_layout()
+            return fig
+        except Exception as e:
+            print(f"Error creating confusion matrix plot: {e}")
+            return None
     
     def save_checkpoint(self, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-                       epoch: int, metrics: Dict[str, float], is_best: bool = False):
-        """チェックポイントを保存"""
+                    epoch: int, metrics: Dict[str, float], is_best: bool = False):
+        """チェックポイントを保存（PyTorch 2.6対応）"""
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
@@ -120,13 +133,17 @@ class ExperimentLogger:
         
         # 通常のチェックポイント
         ckpt_path = os.path.join(self.run_dir, "checkpoints", f"epoch_{epoch}.pt")
-        torch.save(checkpoint, ckpt_path)
+        
+        # PyTorch 2.6対応: _use_new_zipfile_serializationを無効化
+        # これにより古いバージョンとの互換性を保つ
+        torch.save(checkpoint, ckpt_path, _use_new_zipfile_serialization=False)
         
         # ベストモデル
         if is_best:
             best_path = os.path.join(self.run_dir, "checkpoints", "best_model.pt")
-            torch.save(checkpoint, best_path)
+            torch.save(checkpoint, best_path, _use_new_zipfile_serialization=False)
             print(f"Best model saved at epoch {epoch}")
+
     
     def log_attention_weights(self, attention_weights: np.ndarray, epoch: int, 
                             sample_idx: int = 0):
