@@ -1,4 +1,5 @@
 import os
+import sys
 import argparse
 import json
 from collections import Counter
@@ -10,8 +11,14 @@ from torch.utils.data import DataLoader
 from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
 import numpy as np
 
+# プロジェクトルートをパスに追加
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 from data.latent_dataset import LatentFERDataset
-from models.latent_vit import LatentViT
+from models_fer_vit.latent_vit import LatentViT
 from utils.experiment_logger import ExperimentLogger, create_experiment_name
 
 
@@ -26,6 +33,7 @@ def set_seed(seed: int = 42) -> None:
         torch.cuda.manual_seed_all(seed)
     
     # 再現性のための設定（一部の演算でエラーが出る場合がある）
+    # CUDA環境では環境変数CUBLAS_WORKSPACE_CONFIGが必要
     try:
         torch.use_deterministic_algorithms(True)
     except Exception:
