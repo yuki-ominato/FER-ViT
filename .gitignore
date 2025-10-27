@@ -202,3 +202,11 @@ pretrained_models/
 
 # latents
 latents/
+
+# results
+experiments/
+checkpoints/
+logs/
+eval_results/
+tensorboard_logs/
+tensorboard_logs/
