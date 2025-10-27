@@ -90,8 +90,12 @@ class ExperimentLogger:
     
     def _plot_confusion_matrix(self, cm: np.ndarray, class_names: list):
         """混同行列のプロット"""
-        import matplotlib.pyplot as plt
-        import seaborn as sns
+        try:
+            import matplotlib.pyplot as plt
+            import seaborn as sns
+        except ImportError:
+            print("Warning: seaborn not available, skipping confusion matrix plot")
+            return None
         
         fig, ax = plt.subplots(figsize=(8, 6))
         sns.heatmap(cm, annot=True, fmt='.2f', cmap='Blues',
