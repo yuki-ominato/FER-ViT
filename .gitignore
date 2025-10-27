@@ -200,6 +200,9 @@ debug.py
 # pretrained_models
 pretrained_models/
 
+# third_party
+third_party/
+
 # latents
 latents/
 
