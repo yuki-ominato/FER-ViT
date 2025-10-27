@@ -137,6 +137,15 @@ conda run -n fer-vit python -u eval/evaluate_latent_vit.py \
   --output_file test_results.json
 ```
 
+```bash
+python -u eval/evaluate_latent_vit.py \
+  --checkpoint_path experiments/{experiment_name}/{run_id}/checkpoints/best_model.pt \
+  --latent_test_dir latents/test \
+  --batch_size 32 \
+  --output_file test_results.json
+```
+
+
 ### 5. TensorBoard可視化
 
 #### 5.1 TensorBoard起動
