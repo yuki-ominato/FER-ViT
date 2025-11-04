@@ -118,7 +118,7 @@ python scripts/preprocess_faces.py \
 ```bash
 # 訓練データ
 PYTHONPATH=. python scripts/generate_latents.py \
-  --data_root dataset/fer2013/train \
+  --data_root ../dataset/fer2013/train \
   --latent_out latents/train \
   --encoder_model pretrained_models/psp_ffhq_encode.pt \
   --encoder_type psp \
@@ -126,7 +126,7 @@ PYTHONPATH=. python scripts/generate_latents.py \
 
 # 検証データ
 PYTHONPATH=. python scripts/generate_latents.py \
-  --data_root dataset/fer2013/val \
+  --data_root ../dataset/fer2013/val \
   --latent_out latents/val \
   --encoder_model pretrained_models/psp_ffhq_encode.pt \
   --encoder_type psp \
@@ -134,7 +134,7 @@ PYTHONPATH=. python scripts/generate_latents.py \
 
 # テストデータ
 PYTHONPATH=. python scripts/generate_latents.py \
-  --data_root dataset/fer2013/test \
+  --data_root ../dataset/fer2013/test \
   --latent_out latents/test \
   --encoder_model pretrained_models/psp_ffhq_encode.pt \
   --encoder_type psp \
@@ -266,6 +266,15 @@ tensorboard --logdir experiments/ --port 6006
 ```bash
 PYTHONPATH=. python eval/evaluate_model.py \
   --checkpoint_path experiments/<実験ディレクトリ>/checkpoints/best_model.pt \
+  --latent_test_dir latents/test \
+  --output_dir eval_results \
+  --batch_size 32 \
+  --visualize_samples 5
+```
+
+```bash
+PYTHONPATH=. python eval/evaluate_model.py \
+  --checkpoint_path experiments/latent_vit_d6_h8_lr0.0001_bs64_ep60/latent_vit_d6_h8_lr0.0001_bs64_ep60_20251104_113924/checkpoints/best_model.pt \
   --latent_test_dir latents/test \
   --output_dir eval_results \
   --batch_size 32 \
