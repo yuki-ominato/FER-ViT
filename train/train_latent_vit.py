@@ -202,16 +202,20 @@ def main(args):
     # 学習ループ
     best_f1 = 0.0
     train_losses = []
+    train_metrics = []
     val_metrics = []
     
     for epoch in range(1, args.epochs + 1):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
+        train_results = evaluate(model, train_loader, device)
         val_results = evaluate(model, val_loader, device)
         
         train_losses.append(train_loss)
+        train_metrics.append(train_results)
         val_metrics.append(val_results)
         
         print(f"Epoch {epoch}: train_loss={train_loss:.4f} "
+              f"train_acc={train_results['accuracy']:.4f} "
               f"val_acc={val_results['accuracy']:.4f} "
               f"val_f1_macro={val_results['f1_macro']:.4f}")
 
@@ -262,6 +266,7 @@ def main(args):
     
     # 実験サマリーをログ
     final_metrics = {
+        'train_acc': train_metrics[-1]['accuracy'],
         'accuracy': final_results['accuracy'],
         'f1_macro': final_results['f1_macro'],
         'f1_weighted': final_results['f1_weighted'],
