@@ -22,7 +22,7 @@ project_root = os.path.dirname(current_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from data.image_dataset import ImageFERDataset, get_train_transforms, get_val_transforms
+from scripts.image_dataset import ImageFERDataset, get_train_transforms, get_val_transforms
 from models_fer_vit.image_vit import ImageViT, create_vit_small, create_vit_base, create_vit_tiny
 from utils.experiment_logger import ExperimentLogger, create_experiment_name
 

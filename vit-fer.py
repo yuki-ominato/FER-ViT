@@ -24,7 +24,7 @@ transform = transforms.Compose([
 
 # データセットパス
 train_dir = '../dataset/fer2013/train'
-test_dir = '../dataset/fer2013/test'
+test_dir = '../dataset/fer2013/val'
 
 # ImageFolderでデータセット作成
 train_dataset = datasets.ImageFolder(root=train_dir, transform=transform)
@@ -90,7 +90,7 @@ def train():
     plt.title('Learning Curve')
     curve_save_path = os.path.join(learning_process_path, 'loss_acc.png')
     plt.savefig(curve_save_path)
-    plt.show()
+    # plt.show()
     print(f'学習曲線を {curve_save_path} として保存しました')
 
 # テストループ
