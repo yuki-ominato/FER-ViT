@@ -5,6 +5,7 @@ from torchvision import transforms, models, datasets
 from torch.utils.data import DataLoader
 import os
 import matplotlib.pyplot as plt
+import csv
 
 # ハイパーパラメータ
 BATCH_SIZE = 32
@@ -92,6 +93,15 @@ def train():
     plt.savefig(curve_save_path)
     # plt.show()
     print(f'学習曲線を {curve_save_path} として保存しました')
+
+    # 精度と損失をCSVファイルで保存
+    csv_save_path = os.path.join(learning_process_path, 'metrics.csv')
+    with open(csv_save_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Epoch', 'Train Loss', 'Test Accuracy'])
+        for i in range(EPOCHS):
+            writer.writerow([i+1, train_losses[i], test_accuracies[i]])
+    print(f'学習メトリクスを {csv_save_path} として保存しました')
 
 # テストループ
 def test(epoch=None):
