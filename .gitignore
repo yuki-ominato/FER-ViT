@@ -213,8 +213,11 @@ logs/
 eval_results/
 tensorboard_logs/
 tensorboard_logs/
+model/
+learning_process/
 
 # temp scripts
 scripts/check_data_overlap.py
 scripts/diagnose_data_split.py
 scripts/split_dataset.py
+temp.txt
