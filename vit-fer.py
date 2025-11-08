@@ -49,7 +49,7 @@ test_accuracies = []
 
 # データ保存場所
 learning_process_path = "learning_process/"
-model_paramater_path = "model/"
+model_paramater_path = "trained_models/"
 
 # フォルダがなければ作成
 os.makedirs(learning_process_path, exist_ok=True)
