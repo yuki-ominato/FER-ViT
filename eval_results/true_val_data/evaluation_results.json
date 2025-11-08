@@ -1,0 +1,72 @@
+{
+  "accuracy": 0.5547506269155754,
+  "classification_report": {
+    "Angry": {
+      "precision": 0.5059665871121718,
+      "recall": 0.44258872651356995,
+      "f1-score": 0.47216035634743875,
+      "support": 958.0
+    },
+    "Disgust": {
+      "precision": 0.6095238095238096,
+      "recall": 0.5765765765765766,
+      "f1-score": 0.5925925925925926,
+      "support": 111.0
+    },
+    "Fear": {
+      "precision": 0.4482758620689655,
+      "recall": 0.40625,
+      "f1-score": 0.4262295081967213,
+      "support": 1024.0
+    },
+    "Happy": {
+      "precision": 0.6815446339017052,
+      "recall": 0.766065388951522,
+      "f1-score": 0.7213375796178344,
+      "support": 1774.0
+    },
+    "Neutral": {
+      "precision": 0.47630522088353416,
+      "recall": 0.48094079480940793,
+      "f1-score": 0.47861178369652946,
+      "support": 1233.0
+    },
+    "Sad": {
+      "precision": 0.43309002433090027,
+      "recall": 0.4282277465918204,
+      "f1-score": 0.4306451612903226,
+      "support": 1247.0
+    },
+    "Surprise": {
+      "precision": 0.7089820359281437,
+      "recall": 0.7123947051744886,
+      "f1-score": 0.7106842737094838,
+      "support": 831.0
+    },
+    "accuracy": 0.5547506269155754,
+    "macro avg": {
+      "precision": 0.5519554533927472,
+      "recall": 0.5447205626596264,
+      "f1-score": 0.5474658936358461,
+      "support": 7178.0
+    },
+    "weighted avg": {
+      "precision": 0.5484786104983514,
+      "recall": 0.5547506269155754,
+      "f1-score": 0.5505629365663889,
+      "support": 7178.0
+    }
+  },
+  "model_config": {
+    "latent_dim": 512,
+    "seq_len": 18,
+    "embed_dim": 512,
+    "depth": 6,
+    "heads": 8,
+    "mlp_dim": 2048,
+    "num_classes": 7,
+    "dropout": 0.1
+  },
+  "checkpoint_path": "experiments/latent_vit_d6_h8_lr0.0001_bs64_ep60/latent_vit_d6_h8_lr0.0001_bs64_ep60_20251104_113924/checkpoints/best_model.pt",
+  "test_dataset_size": 7178
+}
