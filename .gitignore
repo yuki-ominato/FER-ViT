@@ -214,9 +214,11 @@ tensorboard_logs/
 tensorboard_logs/
 model/
 learning_process/
+trained_models/
 
 # temp scripts
 scripts/check_data_overlap.py
 scripts/diagnose_data_split.py
 scripts/split_dataset.py
 temp.txt
+document/run_scripts.md
