@@ -228,13 +228,17 @@ def main(args):
             logger.log_parameters(model, epoch)
             logger.log_gradients(model, epoch)
 
-        # チェックポイント保存
+        # bestモデルのチェックポイント保存
         is_best = val_results['f1_macro'] > best_f1
         if is_best:
             best_f1 = val_results['f1_macro']
             print(f"New best model saved (F1: {best_f1:.4f})")
+            logger.save_checkpoint(model, optimizer, epoch, val_results, is_best)
         
-        logger.save_checkpoint(model, optimizer, epoch, val_results, is_best)
+        # 最終モデルのチェックポイント保存
+        if epoch == args.epochs:
+            logger.save_checkpoint(model, optimizer, epoch, val_results, is_best=False)
+            print(f"Final model saved at epoch {epoch}")
 
         # スケジューラー更新
         if scheduler is not None:
