@@ -195,7 +195,7 @@ cython_debug/
 
 # script
 debug.py
-/data
+/data/MNIST/
 
 # pretrained_models
 pretrained_models/
