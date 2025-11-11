@@ -11,8 +11,8 @@
 # 事前学習TransformerをStyleGAN潜在空間に適応
 # ==============================
 python train/train_hybrid_latent_vit.py \
-    --latent_train_dir data/latents/train \
-    --latent_val_dir data/latents/val \
+    --latent_train_dir ../dataset/latents/train \
+    --latent_val_dir ../dataset/latents/val \
     --model_size small \
     --use_pretrained \
     --epochs 60 \
@@ -30,8 +30,8 @@ python train/train_hybrid_latent_vit.py \
 # メモリ効率的、学習時間短縮
 # ==============================
 python train/train_hybrid_latent_vit.py \
-    --latent_train_dir data/latents/train \
-    --latent_val_dir data/latents/val \
+    --latent_train_dir ../dataset/latents/train \
+    --latent_val_dir ../dataset/latents/val \
     --model_size small \
     --use_pretrained \
     --freeze_transformer \
