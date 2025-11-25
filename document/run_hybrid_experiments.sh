@@ -11,8 +11,8 @@
 # 事前学習TransformerをStyleGAN潜在空間に適応
 # ==============================
 python train/train_hybrid_latent_vit.py \
-    --latent_train_dir ../dataset/latents/train \
-    --latent_val_dir ../dataset/latents/val \
+    --latent_train_dir latents/train \
+    --latent_val_dir latents/val \
     --model_size small \
     --use_pretrained \
     --epochs 60 \
@@ -24,20 +24,44 @@ python train/train_hybrid_latent_vit.py \
     --use_layerwise_lr \
     --seed 42
 
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
+python train/train_hybrid_latent_vit.py \
+    --latent_train_dir latents/train \
+    --latent_val_dir latents/val \
+    --model_size base \
+    --use_pretrained \
+    --batch_size 32 \
+    --lr 5e-5 \
+    --use_layerwise_lr \
+    --scheduler cosine \
+    --seed 42
+
 # ==============================
 # 実験2: Adapter-based Fine-tuning
 # Parameter-Efficient: Transformerを凍結、Adapterのみ学習
 # メモリ効率的、学習時間短縮
 # ==============================
 python train/train_hybrid_latent_vit.py \
-    --latent_train_dir ../dataset/latents/train \
-    --latent_val_dir ../dataset/latents/val \
+    --latent_train_dir latents/train \
+    --latent_val_dir latents/val \
     --model_size small \
     --use_pretrained \
     --freeze_transformer \
     --use_adapter \
     --adapter_dim 64 \
     --epochs 60 \
+    --batch_size 128 \
+    --lr 1e-3 \
+    --use_class_weights
+
+python train/train_hybrid_latent_vit.py \
+    --latent_train_dir latents/train \
+    --latent_val_dir latents/val \
+    --model_size base \
+    --use_pretrained \
+    --freeze_transformer \
+    --use_adapter \
+    --adapter_dim 64 \
     --batch_size 128 \
     --lr 1e-3 \
     --use_class_weights
@@ -53,6 +77,16 @@ python train/train_hybrid_latent_vit.py \
     --use_pretrained \
     --freeze_transformer \
     --epochs 30 \
+    --batch_size 128 \
+    --lr 1e-3 \
+    --use_class_weights
+
+python train/train_hybrid_latent_vit.py \
+    --latent_train_dir latents/train \
+    --latent_val_dir latents/val \
+    --model_size base \
+    --use_pretrained \
+    --freeze_transformer \
     --batch_size 128 \
     --lr 1e-3 \
     --use_class_weights
@@ -78,8 +112,8 @@ python train/train_hybrid_latent_vit.py \
 # 事前学習なし、完全にランダム初期化
 # ==============================
 python train/train_latent_vit.py \
-    --latent_train_dir data/latents/train \
-    --latent_val_dir data/latents/val \
+    --latent_train_dir latents/train \
+    --latent_val_dir latents/val \
     --epochs 100 \
     --batch_size 64 \
     --lr 1e-3 \

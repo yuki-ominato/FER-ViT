@@ -24,10 +24,11 @@ if project_root not in sys.path:
 
 from data.latent_dataset import LatentFERDataset
 from models_fer_vit.latent_vit import LatentViT
+from models_fer_vit.hybrid_latent_vit import create_hybrid_latent_vit
 
 
 def load_model(checkpoint_path: str, device: str = "cuda"):
-    """学習済みモデルをロード"""
+    """学習済みモデルをロード(HybridViT と LatentViT の両方に対応)"""
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     
@@ -43,7 +44,7 @@ def load_model(checkpoint_path: str, device: str = "cuda"):
         config = checkpoint['config']
         model_config = config.get('model', config)
     elif 'args' in checkpoint:
-        # train_latent_vit_simple.pyからのチェックポイント
+        # train_latent_vit_simple.pyからのチェックポイント (古い形式)
         args = checkpoint['args']
         model_config = {
             'latent_dim': args.latent_dim,
@@ -56,7 +57,7 @@ def load_model(checkpoint_path: str, device: str = "cuda"):
             'dropout': args.dropout,
         }
     else:
-        # デフォルト設定
+        # デフォルト設定 (configが見つからない場合)
         print("Warning: Config not found in checkpoint, using default values")
         model_config = {
             'latent_dim': 512,
@@ -68,10 +69,50 @@ def load_model(checkpoint_path: str, device: str = "cuda"):
             'num_classes': 7,
             'dropout': 0.1,
         }
+
+    # train_hybrid_latent_vit.py の config には num_classes が含まれていない場合があるため、
+    # その場合はデフォルトの7クラスを設定する
+    if 'num_classes' not in model_config:
+        print("Warning: 'num_classes' not in config, defaulting to 7.")
+        model_config['num_classes'] = 7
+
+    # 'model_size' キーの有無で、ロードするモデルを分岐
+    if 'model_size' in model_config:
+        # HybridLatentViT の場合
+        print(f"Loading HybridLatentViT (model_size: {model_config['model_size']})")
+        
+        # create_hybrid_latent_vit が期待する引数を config から安全に抽出
+        hybrid_args = {
+            'latent_dim': model_config.get('latent_dim', 512),
+            'seq_len': model_config.get('seq_len', 18),
+            'model_size': model_config.get('model_size', 'small'),
+            'num_classes': model_config.get('num_classes', 7),
+            'use_pretrained': model_config.get('use_pretrained', True),
+            'freeze_transformer': model_config.get('freeze_transformer', False),
+            'freeze_stages': model_config.get('freeze_stages', None),
+            'use_adapter': model_config.get('use_adapter', False),
+            'adapter_dim': model_config.get('adapter_dim', 64),
+        }
+        # model_config に含まれないキー（例: 'embed_dim'）が渡されないようにする
+        model = create_hybrid_latent_vit(**hybrid_args).to(device)
     
-    # モデル初期化
-    model = LatentViT(**model_config).to(device)
-    
+    else:
+        # 従来の LatentViT (スクラッチ学習) の場合
+        print("Loading LatentViT (scratch model)")
+        
+        # LatentViT が期待する引数を config から安全に抽出
+        latent_vit_args = {
+            'latent_dim': model_config.get('latent_dim', 512),
+            'seq_len': model_config.get('seq_len', 18),
+            'embed_dim': model_config.get('embed_dim', 512),
+            'depth': model_config.get('depth', 6),
+            'heads': model_config.get('heads', 8),
+            'mlp_dim': model_config.get('mlp_dim', 2048),
+            'num_classes': model_config.get('num_classes', 7),
+            'dropout': model_config.get('dropout', 0.1),
+        }
+        model = LatentViT(**latent_vit_args).to(device)
+
     # state_dictのキー名に対応
     if 'model_state_dict' in checkpoint:
         model.load_state_dict(checkpoint['model_state_dict'])
@@ -85,8 +126,8 @@ def load_model(checkpoint_path: str, device: str = "cuda"):
     # エポック情報を取得
     epoch_info = checkpoint.get('epoch', 'unknown')
     print(f"Loaded model from epoch {epoch_info}")
-    # if 'metrics' in checkpoint:
-    #     print(f"Checkpoint metrics: {checkpoint['metrics']}")
+    if 'metrics' in checkpoint:
+        print(f"Checkpoint metrics: {checkpoint['metrics']}")
     
     return model, model_config
 
@@ -199,7 +240,16 @@ def visualize_attention(model, sample_latent, device, save_path=None):
         b = x.size(0)
         cls = model.cls_token.expand(b, -1, -1)  # (1, 1, embed_dim)
         x_with_cls = torch.cat([cls, x], dim=1)  # (1, L+1, embed_dim)
-        x_with_pos = x_with_cls + model.pos_emb
+
+        # HybridLatentViT ('pos_embed') と LatentViT ('pos_emb') の両方に対応
+        if hasattr(model, 'pos_embed'):
+            pos = model.pos_embed  # HybridLatentViT の場合
+        elif hasattr(model, 'pos_emb'):
+            pos = model.pos_emb    # LatentViT の場合
+        else:
+            raise AttributeError("Model has neither 'pos_embed' nor 'pos_emb'")
+
+        x_with_pos = x_with_cls + pos
         
         # Transformer処理
         x_out = model.transformer(x_with_pos)  # (1, L+1, embed_dim)
