@@ -1,0 +1,73 @@
+{
+  "accuracy": 0.5289774310392867,
+  "classification_report": {
+    "Angry": {
+      "precision": 0.43478260869565216,
+      "recall": 0.3966597077244259,
+      "f1-score": 0.4148471615720524,
+      "support": 958.0
+    },
+    "Disgust": {
+      "precision": 0.5210084033613446,
+      "recall": 0.5585585585585585,
+      "f1-score": 0.5391304347826087,
+      "support": 111.0
+    },
+    "Fear": {
+      "precision": 0.45108695652173914,
+      "recall": 0.32421875,
+      "f1-score": 0.37727272727272726,
+      "support": 1024.0
+    },
+    "Happy": {
+      "precision": 0.7097505668934241,
+      "recall": 0.705749718151071,
+      "f1-score": 0.7077444884115319,
+      "support": 1774.0
+    },
+    "Neutral": {
+      "precision": 0.4734819369715603,
+      "recall": 0.49959448499594483,
+      "f1-score": 0.4861878453038674,
+      "support": 1233.0
+    },
+    "Sad": {
+      "precision": 0.37614080834419816,
+      "recall": 0.46271050521251,
+      "f1-score": 0.4149586479683567,
+      "support": 1247.0
+    },
+    "Surprise": {
+      "precision": 0.68,
+      "recall": 0.6955475330926595,
+      "f1-score": 0.6876859012492564,
+      "support": 831.0
+    },
+    "accuracy": 0.5289774310392867,
+    "macro avg": {
+      "precision": 0.5208930401125599,
+      "recall": 0.5204341796764529,
+      "f1-score": 0.5182610295086286,
+      "support": 7178.0
+    },
+    "weighted avg": {
+      "precision": 0.5312475671972539,
+      "recall": 0.5289774310392867,
+      "f1-score": 0.5276571587392822,
+      "support": 7178.0
+    }
+  },
+  "model_config": {
+    "latent_dim": 512,
+    "seq_len": 18,
+    "model_size": "small",
+    "use_pretrained": true,
+    "freeze_transformer": false,
+    "freeze_stages": null,
+    "use_adapter": false,
+    "adapter_dim": null,
+    "num_classes": 7
+  },
+  "checkpoint_path": "experiments/hybrid_vit_latent_vit_d6_h8_lr0.0001_bs64_ep60/hybrid_vit_latent_vit_d6_h8_lr0.0001_bs64_ep60_20251108_092057/checkpoints/best_model.pt",
+  "test_dataset_size": 7178
+}
