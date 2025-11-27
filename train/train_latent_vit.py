@@ -127,9 +127,32 @@ def train_epoch(model, loader, optimizer, criterion, device):
         latents = latents.to(device)
         labels = labels.to(device)
 
+        # --- Mixup Implementation ---
+        # 50%の確率、または常時適用するかは実験次第ですが、今回は常時適用例
+        alpha = 1.0
+        if alpha > 0:
+            # Beta分布から混合比率lamをサンプリング
+            lam = np.random.beta(alpha, alpha)
+        else:
+            lam = 1.0
+
+        # バッチ内のデータをシャッフル
+        index = torch.randperm(latents.size(0)).to(device)
+
+        # 潜在ベクトルを混ぜる (StyleGANの空間では、これが中間の顔になる)
+        mixed_latents = lam * latents + (1 - lam) * latents[index]
+
+        # ラベルも混ぜる必要があるため、Loss計算時に処理する
+        # ----------------------------
+
         optimizer.zero_grad()
-        logits = model(latents)
-        loss = criterion(logits, labels)
+        
+        # 混ぜたベクトルを入力
+        logits = model(mixed_latents)
+
+        # Lossの計算（元のラベルと、混ぜた相手のラベルの加重平均）
+        loss = lam * criterion(logits, labels) + (1 - lam) * criterion(logits, labels[index])
+        
         loss.backward()
         optimizer.step()
         total_loss += loss.item() * latents.size(0)
