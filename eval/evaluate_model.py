@@ -126,8 +126,8 @@ def load_model(checkpoint_path: str, device: str = "cuda"):
     # エポック情報を取得
     epoch_info = checkpoint.get('epoch', 'unknown')
     print(f"Loaded model from epoch {epoch_info}")
-    if 'metrics' in checkpoint:
-        print(f"Checkpoint metrics: {checkpoint['metrics']}")
+    # if 'metrics' in checkpoint:
+    #     print(f"Checkpoint metrics: {checkpoint['metrics']}")
     
     return model, model_config
 
