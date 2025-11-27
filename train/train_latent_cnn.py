@@ -36,10 +36,12 @@ def set_seed(seed: int = 42) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-    try:
-        torch.use_deterministic_algorithms(True)
-    except Exception:
-        pass
+    # 決定論的アルゴリズムは一部の演算で問題を起こすため無効化
+    # MaxPoolなどがサポートされていない
+    # try:
+    #     torch.use_deterministic_algorithms(True)
+    # except Exception:
+    #     pass
 
 
 def create_subset_dataset(dataset: LatentFERDataset, fraction: float, seed: int = 42):
@@ -113,6 +115,7 @@ def train_epoch(model, loader, optimizer, criterion, device):
     for latents, labels in loader:
         latents = latents.to(device)
         labels = labels.to(device)
+
         # --- Mixup Implementation ---
         # 50%の確率、または常時適用するかは実験次第ですが、今回は常時適用例
         alpha = 1.0
@@ -138,7 +141,6 @@ def train_epoch(model, loader, optimizer, criterion, device):
 
         # Lossの計算（元のラベルと、混ぜた相手のラベルの加重平均）
         loss = lam * criterion(logits, labels) + (1 - lam) * criterion(logits, labels[index])
-        
         loss.backward()
         optimizer.step()
         total_loss += loss.item() * latents.size(0)

@@ -105,14 +105,15 @@ class LatentCNN(nn.Module):
                 for _ in range(2)
             ])
         
-        # グローバルプーリング
+        # グローバルプーリング（決定論的）
         self.global_avg_pool = nn.AdaptiveAvgPool1d(1)
-        self.global_max_pool = nn.AdaptiveMaxPool1d(1)
+        # MaxPoolの代わりに平均プーリングのみ使用（決定論的）
+        self.use_max_pool = False  # 決定論的実行のため無効化
         
-        # 分類ヘッド
+        # 分類ヘッド（入力次元を調整）
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(hidden_dims[-1] * 2, 512),  # avg + max pooling
+            nn.Linear(hidden_dims[-1], 512),  # avg poolingのみ
             nn.BatchNorm1d(512),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
@@ -152,13 +153,11 @@ class LatentCNN(nn.Module):
             for res_block in self.res_blocks:
                 x = res_block(x)
         
-        # グローバルプーリング（avg + max）
+        # グローバルプーリング（avgのみ - 決定論的）
         avg_pool = self.global_avg_pool(x)  # (B, C, 1)
-        max_pool = self.global_max_pool(x)  # (B, C, 1)
-        x = torch.cat([avg_pool, max_pool], dim=1)  # (B, 2*C, 1)
         
         # 分類
-        x = self.classifier(x)
+        x = self.classifier(avg_pool)
         return x
 
 
