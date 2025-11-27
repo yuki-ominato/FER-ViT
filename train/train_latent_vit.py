@@ -1,3 +1,8 @@
+"""
+LatentViT学習スクリプト（データセット削減機能付き）
+--data_fraction オプションで使用するデータの割合を指定可能
+"""
+
 import os
 import sys
 import argparse
@@ -7,11 +12,11 @@ from collections import Counter
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
-from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
+from torch.utils.data import DataLoader, Subset
+from sklearn.metrics import accuracy_score, f1_score, classification_report
+from sklearn.model_selection import train_test_split
 import numpy as np
 
-# プロジェクトルートをパスに追加
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 if project_root not in sys.path:
@@ -24,34 +29,86 @@ from utils.experiment_logger import ExperimentLogger, create_experiment_name
 
 def set_seed(seed: int = 42) -> None:
     import random
-    import numpy as np
-
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-    
-    # 再現性のための設定（一部の演算でエラーが出る場合がある）
-    # CUDA環境では環境変数CUBLAS_WORKSPACE_CONFIGが必要
     try:
         torch.use_deterministic_algorithms(True)
     except Exception:
         pass
 
 
-def calculate_class_weights(dataset: LatentFERDataset) -> torch.Tensor:
-    """クラス重みを計算（不均衡データ対応）"""
+def create_subset_dataset(dataset: LatentFERDataset, fraction: float, seed: int = 42):
+    """
+    データセットをクラスバランスを保ちながら削減
+    
+    Args:
+        dataset: 元のデータセット
+        fraction: 使用するデータの割合 (0.0 < fraction <= 1.0)
+        seed: ランダムシード
+    
+    Returns:
+        Subset: 削減されたデータセット
+    """
+    if fraction >= 1.0:
+        return dataset
+    
+    # 各サンプルのラベルを取得
     labels = []
     for i in range(len(dataset)):
         _, label = dataset[i]
         labels.append(label)
     
+    # クラス別にインデックスを分類
+    class_indices = {}
+    for idx, label in enumerate(labels):
+        if label not in class_indices:
+            class_indices[label] = []
+        class_indices[label].append(idx)
+    
+    # 各クラスから指定割合のサンプルを選択
+    selected_indices = []
+    print(f"\nデータセット削減: {fraction*100:.1f}% を使用")
+    print("="*60)
+    
+    for class_id, indices in sorted(class_indices.items()):
+        n_samples = len(indices)
+        n_select = max(1, int(n_samples * fraction))  # 最低1サンプルは残す
+        
+        # 再現性のためにシード固定してサンプリング
+        np.random.seed(seed)
+        selected = np.random.choice(indices, n_select, replace=False)
+        selected_indices.extend(selected)
+        
+        emotion_name = dataset.get_class_names()[class_id]
+        print(f"  {emotion_name:>8s}: {n_samples:>5d} → {n_select:>5d} ({n_select/n_samples*100:.1f}%)")
+    
+    print(f"  {'Total':>8s}: {len(labels):>5d} → {len(selected_indices):>5d}")
+    print("="*60)
+    
+    return Subset(dataset, selected_indices)
+
+
+def calculate_class_weights(dataset) -> torch.Tensor:
+    """クラス重みを計算"""
+    labels = []
+    
+    # Subsetの場合とそうでない場合で処理を分ける
+    if isinstance(dataset, Subset):
+        for idx in dataset.indices:
+            _, label = dataset.dataset[idx]
+            labels.append(label)
+    else:
+        for i in range(len(dataset)):
+            _, label = dataset[i]
+            labels.append(label)
+    
     class_counts = Counter(labels)
     total_samples = len(labels)
     num_classes = len(class_counts)
     
-    # 逆頻度重みを計算
     weights = []
     for i in range(num_classes):
         if i in class_counts:
@@ -67,7 +124,7 @@ def train_epoch(model, loader, optimizer, criterion, device):
     model.train()
     total_loss = 0.0
     for latents, labels in loader:
-        latents = latents.to(device)  # (B, L, D)
+        latents = latents.to(device)
         labels = labels.to(device)
 
         optimizer.zero_grad()
@@ -81,7 +138,6 @@ def train_epoch(model, loader, optimizer, criterion, device):
 
 @torch.no_grad()
 def evaluate(model, loader, device):
-    """評価関数（精度、F1スコア、詳細メトリクス）"""
     model.eval()
     all_preds = []
     all_labels = []
@@ -95,7 +151,6 @@ def evaluate(model, loader, device):
         all_preds.extend(preds.cpu().numpy())
         all_labels.extend(labels.cpu().numpy())
     
-    # メトリクス計算
     accuracy = accuracy_score(all_labels, all_preds)
     f1_macro = f1_score(all_labels, all_preds, average='macro')
     f1_weighted = f1_score(all_labels, all_preds, average='weighted')
@@ -112,23 +167,44 @@ def evaluate(model, loader, device):
 def main(args):
     set_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
     # データセット読み込み
-    train_ds = LatentFERDataset(args.latent_train_dir)
+    print("\n" + "="*60)
+    print("データセット読み込み中...")
+    print("="*60)
+    
+    train_ds_full = LatentFERDataset(args.latent_train_dir)
     val_ds = LatentFERDataset(args.latent_val_dir)
+    
+    # データセット削減
+    if args.data_fraction < 1.0:
+        train_ds = create_subset_dataset(train_ds_full, args.data_fraction, args.seed)
+        print(f"\n削減後の訓練データ: {len(train_ds)} サンプル")
+    else:
+        train_ds = train_ds_full
+        print(f"\n全訓練データを使用: {len(train_ds)} サンプル")
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, 
+                             num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, 
+                           num_workers=4, pin_memory=True)
 
-    # seq_len を自動推定（latentファイルから形状を取得）
+    # seq_lenを自動推定
     if args.seq_len <= 0:
-        # 最初のサンプルを読み、(L, D) から L を推定
-        sample_latent, _ = train_ds[0]
+        if isinstance(train_ds, Subset):
+            sample_latent, _ = train_ds.dataset[train_ds.indices[0]]
+        else:
+            sample_latent, _ = train_ds[0]
         inferred_seq_len = int(sample_latent.shape[0])
-        print(f"Inferred seq_len from latents: {inferred_seq_len}")
+        print(f"\n潜在コードから推定された seq_len: {inferred_seq_len}")
         args.seq_len = inferred_seq_len
 
     # モデル初期化
+    print("\n" + "="*60)
+    print("モデル初期化中...")
+    print("="*60)
+    
     model = LatentViT(
         latent_dim=args.latent_dim,
         seq_len=args.seq_len,
@@ -140,21 +216,21 @@ def main(args):
         dropout=args.dropout,
     ).to(device)
 
-    # クラス重み計算（不均衡データ対応）
+    # クラス重み計算
     if args.use_class_weights:
         class_weights = calculate_class_weights(train_ds).to(device)
-        print(f"Class weights: {class_weights}")
+        print(f"\nクラス重み: {class_weights}")
         criterion = nn.CrossEntropyLoss(weight=class_weights)
     else:
         criterion = nn.CrossEntropyLoss()
 
-    # オプティマイザーとスケジューラー
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     
     if args.scheduler == 'cosine':
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     elif args.scheduler == 'plateau':
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=5, factor=0.5)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', 
+                                                         patience=5, factor=0.5)
     else:
         scheduler = None
 
@@ -178,69 +254,56 @@ def main(args):
         'use_class_weights': args.use_class_weights,
         'scheduler': args.scheduler,
         'seed': args.seed,
-    }
-    
-    data_config = {
-        'train_dir': args.latent_train_dir,
-        'val_dir': args.latent_val_dir,
+        'data_fraction': args.data_fraction,  # 重要: データ削減率を記録
     }
     
     config = {
         'model': model_config,
         'training': training_config,
-        'data': data_config,
+        'data': {
+            'train_dir': args.latent_train_dir,
+            'val_dir': args.latent_val_dir,
+            'train_samples_total': len(train_ds_full),
+            'train_samples_used': len(train_ds),
+            'val_samples': len(val_ds),
+        },
     }
     
-    # 実験ロガー初期化
-    experiment_name = create_experiment_name(model_config, training_config)
+    # 実験ロガー初期化（データ削減率を名前に含める）
+    base_name = create_experiment_name(model_config, training_config)
+    experiment_name = f"{base_name}_frac{int(args.data_fraction*100)}"
     logger = ExperimentLogger(experiment_name, base_dir="experiments")
     logger.log_config(config)
-    
-    # チェックポイントディレクトリを実験ロガーのディレクトリに設定
-    args.checkpoint_dir = logger.get_experiment_path()
 
     # 学習ループ
+    print("\n" + "="*60)
+    print("学習開始...")
+    print("="*60)
+    
     best_f1 = 0.0
-    train_losses = []
-    train_metrics = []
-    val_metrics = []
     
     for epoch in range(1, args.epochs + 1):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        train_results = evaluate(model, train_loader, device)
         val_results = evaluate(model, val_loader, device)
         
-        train_losses.append(train_loss)
-        train_metrics.append(train_results)
-        val_metrics.append(val_results)
-        
-        print(f"Epoch {epoch}: train_loss={train_loss:.4f} "
-              f"train_acc={train_results['accuracy']:.4f} "
+        print(f"Epoch {epoch}/{args.epochs}: "
+              f"loss={train_loss:.4f} "
               f"val_acc={val_results['accuracy']:.4f} "
-              f"val_f1_macro={val_results['f1_macro']:.4f}")
+              f"val_f1={val_results['f1_macro']:.4f}")
 
-        # TensorBoardロギング
         logger.log_learning_curves(train_loss, val_results, epoch)
         logger.log_learning_rate(optimizer, epoch)
         
-        # パラメータと勾配のログ（10エポックごと）
         if epoch % 10 == 0:
             logger.log_parameters(model, epoch)
             logger.log_gradients(model, epoch)
 
-        # bestモデルのチェックポイント保存
         is_best = val_results['f1_macro'] > best_f1
         if is_best:
             best_f1 = val_results['f1_macro']
-            print(f"New best model saved (F1: {best_f1:.4f})")
+            print(f"  → Best model (F1: {best_f1:.4f})")
             logger.save_checkpoint(model, optimizer, epoch, val_results, is_best)
-        
-        # 最終モデルのチェックポイント保存
-        if epoch == args.epochs:
-            logger.save_checkpoint(model, optimizer, epoch, val_results, is_best=False)
-            print(f"Final model saved at epoch {epoch}")
 
-        # スケジューラー更新
         if scheduler is not None:
             if args.scheduler == 'plateau':
                 scheduler.step(val_results['f1_macro'])
@@ -248,75 +311,68 @@ def main(args):
                 scheduler.step()
 
     # 最終結果
-    print(f"\nTraining completed!")
+    print(f"\n{'='*60}")
+    print("学習完了!")
+    print(f"{'='*60}")
+    print(f"使用データ割合: {args.data_fraction*100:.1f}%")
     print(f"Best F1 macro: {best_f1:.4f}")
     
-    # 最終評価（詳細レポート）
     final_results = evaluate(model, val_loader, device)
-    print(f"\nFinal validation results:")
-    print(f"Accuracy: {final_results['accuracy']:.4f}")
-    print(f"F1 Macro: {final_results['f1_macro']:.4f}")
-    print(f"F1 Weighted: {final_results['f1_weighted']:.4f}")
-    
-    # 分類レポート
     emotion_names = ['Angry', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sad', 'Surprise']
     print(f"\nClassification Report:")
     print(classification_report(final_results['labels'], final_results['predictions'], 
                               target_names=emotion_names))
     
-    # 混同行列をログ
     logger.log_confusion_matrix(final_results['labels'], final_results['predictions'], 
                                emotion_names, args.epochs)
     
-    # 実験サマリーをログ
     final_metrics = {
-        'train_acc': train_metrics[-1]['accuracy'],
         'accuracy': final_results['accuracy'],
         'f1_macro': final_results['f1_macro'],
         'f1_weighted': final_results['f1_weighted'],
         'best_f1_macro': best_f1,
+        'data_fraction': args.data_fraction,
     }
     logger.log_experiment_summary(final_metrics)
-    
-    # ロガーを閉じる
     logger.close()
     
-    print(f"\nExperiment completed. Results saved to: {logger.get_experiment_path()}")
-    print(f"TensorBoard logs available at: {os.path.join(logger.get_experiment_path(), 'logs')}")
+    print(f"\n実験結果: {logger.get_experiment_path()}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train LatentViT for FER")
+    parser = argparse.ArgumentParser(description="Train LatentViT with data fraction option")
     
     # データ関連
-    parser.add_argument("--latent_train_dir", required=True, help="Path to training latent files")
-    parser.add_argument("--latent_val_dir", required=True, help="Path to validation latent files")
+    parser.add_argument("--latent_train_dir", required=True)
+    parser.add_argument("--latent_val_dir", required=True)
+    parser.add_argument("--data_fraction", type=float, default=1.0,
+                       help="使用する訓練データの割合 (0.0 < fraction <= 1.0)")
     
     # 学習設定
-    parser.add_argument("--checkpoint_dir", default="checkpoints/latent_vit", help="Checkpoint save directory")
-    parser.add_argument("--epochs", type=int, default=60, help="Number of training epochs")
-    parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
-    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
-    parser.add_argument("--weight_decay", type=float, default=1e-2, help="Weight decay")
-    parser.add_argument("--scheduler", choices=['none', 'cosine', 'plateau'], default='plateau', 
-                       help="Learning rate scheduler")
-    parser.add_argument("--use_class_weights", action='store_true', 
-                       help="Use class weights for imbalanced data")
+    parser.add_argument("--epochs", type=int, default=60)
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--weight_decay", type=float, default=1e-2)
+    parser.add_argument("--scheduler", choices=['none', 'cosine', 'plateau'], default='plateau')
+    parser.add_argument("--use_class_weights", action='store_true')
     
     # モデル設定
-    parser.add_argument("--latent_dim", type=int, default=512, help="Latent dimension")
-    parser.add_argument("--seq_len", type=int, default=0, help="Sequence length (w+ layers). If 0 or less, infer from latents.")
-    parser.add_argument("--embed_dim", type=int, default=512, help="Embedding dimension")
-    parser.add_argument("--depth", type=int, default=6, help="Transformer depth")
-    parser.add_argument("--heads", type=int, default=8, help="Number of attention heads")
-    parser.add_argument("--mlp_dim", type=int, default=2048, help="MLP dimension")
-    parser.add_argument("--num_classes", type=int, default=7, help="Number of emotion classes")
-    parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
+    parser.add_argument("--latent_dim", type=int, default=512)
+    parser.add_argument("--seq_len", type=int, default=0)
+    parser.add_argument("--embed_dim", type=int, default=512)
+    parser.add_argument("--depth", type=int, default=6)
+    parser.add_argument("--heads", type=int, default=8)
+    parser.add_argument("--mlp_dim", type=int, default=2048)
+    parser.add_argument("--num_classes", type=int, default=7)
+    parser.add_argument("--dropout", type=float, default=0.1)
     
-    # 再現性
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    # その他
+    parser.add_argument("--seed", type=int, default=42)
     
     args = parser.parse_args()
+    
+    # データ割合の検証
+    if args.data_fraction <= 0.0 or args.data_fraction > 1.0:
+        raise ValueError(f"data_fraction must be in (0.0, 1.0], got {args.data_fraction}")
+    
     main(args)
-
-
