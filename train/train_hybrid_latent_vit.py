@@ -289,11 +289,13 @@ def main(args):
     
     for epoch in range(1, args.epochs + 1):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
+        train_results = evaluate(model, train_loader, device)
         val_results = evaluate(model, val_loader, device)
         
         print(f"Epoch {epoch}/{args.epochs}: "
-              f"loss={train_loss:.4f} "
-              f"acc={val_results['accuracy']:.4f} "
+              f"train_acc={train_results['accuracy']:.4f} "
+              f"train_loss={train_loss:.4f} "
+              f"val_acc={val_results['accuracy']:.4f} "
               f"f1={val_results['f1_macro']:.4f}")
         
         logger.log_learning_curves(train_loss, val_results, epoch)
@@ -363,7 +365,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_size", choices=['tiny', 'small', 'base'],
                        default='small', help="Pretrained ViT size")
     parser.add_argument("--num_classes", type=int, default=7)
-    parser.add_argument("--use_pretrained", action='store_true', default=True,
+    parser.add_argument("--use_pretrained", action='store_true', default=False,
                        help="Use pretrained transformer weights")
     
     # ファインチューニング戦略

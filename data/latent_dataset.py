@@ -58,7 +58,7 @@ class LatentFERDataset(Dataset):
         filepath = self.samples[idx]
         
         try:
-            data = torch.load(filepath, map_location='cpu')
+            data = torch.load(filepath, map_location='cpu', weights_only=True)
             
             # データ構造の検証
             if not isinstance(data, dict):
@@ -93,7 +93,7 @@ class LatentFERDataset(Dataset):
         
         for filepath in self.samples:
             try:
-                data = torch.load(filepath, map_location='cpu')
+                data = torch.load(filepath, map_location='cpu', weights_only=True)
                 label = data['label']
                 class_counts[label] = class_counts.get(label, 0) + 1
             except Exception as e:

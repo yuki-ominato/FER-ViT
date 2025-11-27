@@ -28,7 +28,7 @@ export CUBLAS_WORKSPACE_CONFIG=:4096:8
 python train/train_hybrid_latent_vit.py \
     --latent_train_dir latents/train \
     --latent_val_dir latents/val \
-    --model_size base \
+    --model_size small \
     --use_pretrained \
     --batch_size 32 \
     --lr 5e-5 \
@@ -118,6 +118,17 @@ python train/train_latent_vit.py \
     --batch_size 64 \
     --lr 1e-3 \
     --use_class_weights
+
+python train/train_hybrid_latent_vit.py \
+    --latent_train_dir latents/train \
+    --latent_val_dir latents/val \
+    --model_size small \
+    --epochs 100 \
+    --batch_size 64 \
+    --lr 1e-3 \
+    --weight_decay 0.05 \
+    --scheduler cosine \
+    --seed 42
 
 # ==============================
 # モデルサイズ別の実験
