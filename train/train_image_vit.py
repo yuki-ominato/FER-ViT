@@ -1,6 +1,6 @@
 """
 画像から直接ViTを学習するスクリプト
-従来手法との比較用ベースライン
+学習曲線の属性を統一: train_loss, train_acc, train_f1, val_loss, val_acc, val_f1
 """
 
 import os
@@ -16,7 +16,6 @@ from torch.utils.data import DataLoader
 from sklearn.metrics import accuracy_score, f1_score, classification_report
 import numpy as np
 
-# プロジェクトルートをパスに追加
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 if project_root not in sys.path:
@@ -43,7 +42,7 @@ def set_seed(seed: int = 42) -> None:
 
 
 def calculate_class_weights(dataset: ImageFERDataset) -> torch.Tensor:
-    """クラス重みを計算（不均衡データ対応）"""
+    """クラス重みを計算(不均衡データ対応)"""
     labels = [label for _, label in dataset.samples]
     class_counts = Counter(labels)
     total_samples = len(labels)
@@ -61,10 +60,11 @@ def calculate_class_weights(dataset: ImageFERDataset) -> torch.Tensor:
 
 
 def train_epoch(model, loader, optimizer, criterion, device, grad_clip=None):
-    """1エポックの学習"""
+    """1エポックの学習(損失、精度、F1スコアを返す)"""
     model.train()
     total_loss = 0.0
-    total_samples = 0
+    all_preds = []
+    all_labels = []
     
     for images, labels in loader:
         images = images.to(device)
@@ -75,22 +75,31 @@ def train_epoch(model, loader, optimizer, criterion, device, grad_clip=None):
         loss = criterion(logits, labels)
         loss.backward()
         
-        # 勾配クリッピング（オプション）
+        # 勾配クリッピング(オプション)
         if grad_clip is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         
         optimizer.step()
         
         total_loss += loss.item() * images.size(0)
-        total_samples += images.size(0)
+        
+        # 予測結果を記録
+        preds = logits.argmax(dim=1)
+        all_preds.extend(preds.cpu().numpy())
+        all_labels.extend(labels.cpu().numpy())
     
-    return total_loss / total_samples
+    avg_loss = total_loss / len(loader.dataset)
+    accuracy = accuracy_score(all_labels, all_preds)
+    f1 = f1_score(all_labels, all_preds, average='macro')
+    
+    return avg_loss, accuracy, f1
 
 
 @torch.no_grad()
-def evaluate(model, loader, device):
-    """モデルの評価"""
+def evaluate(model, loader, criterion, device):
+    """モデルの評価(損失、精度、F1スコアを返す)"""
     model.eval()
+    total_loss = 0.0
     all_preds = []
     all_labels = []
     
@@ -99,16 +108,20 @@ def evaluate(model, loader, device):
         labels = labels.to(device)
         
         logits = model(images)
+        loss = criterion(logits, labels)
         preds = logits.argmax(dim=1)
         
+        total_loss += loss.item() * images.size(0)
         all_preds.extend(preds.cpu().numpy())
         all_labels.extend(labels.cpu().numpy())
     
+    avg_loss = total_loss / len(loader.dataset)
     accuracy = accuracy_score(all_labels, all_preds)
     f1_macro = f1_score(all_labels, all_preds, average='macro')
     f1_weighted = f1_score(all_labels, all_preds, average='weighted')
     
     return {
+        'loss': avg_loss,
         'accuracy': accuracy,
         'f1_macro': f1_macro,
         'f1_weighted': f1_weighted,
@@ -170,7 +183,6 @@ def main(args):
     elif args.model_size == 'base':
         model = create_vit_base(num_classes=args.num_classes, img_size=args.img_size)
     else:
-        # カスタム設定
         model = ImageViT(
             img_size=args.img_size,
             patch_size=args.patch_size,
@@ -230,7 +242,6 @@ def main(args):
             verbose=True
         )
     elif args.scheduler == 'warmup_cosine':
-        # ウォームアップ + Cosine Annealing
         warmup_epochs = min(10, args.epochs // 10)
         
         def lr_lambda(epoch):
@@ -286,7 +297,6 @@ def main(args):
     }
     
     # 実験ロガー初期化
-    # experiment_name = create_experiment_name(model_config, training_config, prefix="image_vit")
     experiment_name = create_experiment_name(model_config, training_config)
     logger = ExperimentLogger(experiment_name, base_dir="experiments")
     logger.log_config(config)
@@ -299,22 +309,32 @@ def main(args):
     best_f1 = 0.0
     
     for epoch in range(1, args.epochs + 1):
-        # 学習
-        train_loss = train_epoch(
+        # 訓練
+        train_loss, train_acc, train_f1 = train_epoch(
             model, train_loader, optimizer, criterion, device,
             grad_clip=args.grad_clip
         )
         
-        # 評価
-        val_results = evaluate(model, val_loader, device)
+        # 検証
+        val_results = evaluate(model, val_loader, criterion, device)
+        val_loss = val_results['loss']
+        val_acc = val_results['accuracy']
+        val_f1 = val_results['f1_macro']
         
         print(f"Epoch {epoch}/{args.epochs}: "
-              f"train_loss={train_loss:.4f} "
-              f"val_acc={val_results['accuracy']:.4f} "
-              f"val_f1={val_results['f1_macro']:.4f}")
+              f"train_loss={train_loss:.4f} train_acc={train_acc:.4f} train_f1={train_f1:.4f} "
+              f"val_loss={val_loss:.4f} val_acc={val_acc:.4f} val_f1={val_f1:.4f}")
         
-        # ロギング
-        logger.log_learning_curves(train_loss, val_results, epoch)
+        # 統一された学習曲線のログ記録
+        metrics = {
+            'train_loss': train_loss,
+            'train_acc': train_acc,
+            'train_f1': train_f1,
+            'val_loss': val_loss,
+            'val_acc': val_acc,
+            'val_f1': val_f1,
+        }
+        logger.log_metrics(metrics, epoch)
         logger.log_learning_rate(optimizer, epoch)
         
         if epoch % 10 == 0:
@@ -322,9 +342,9 @@ def main(args):
             logger.log_gradients(model, epoch)
         
         # チェックポイント保存
-        is_best = val_results['f1_macro'] > best_f1
+        is_best = val_f1 > best_f1
         if is_best:
-            best_f1 = val_results['f1_macro']
+            best_f1 = val_f1
             print(f"  → New best model (F1: {best_f1:.4f})")
         
         logger.save_checkpoint(model, optimizer, epoch, val_results, is_best)
@@ -332,7 +352,7 @@ def main(args):
         # スケジューラー更新
         if scheduler is not None:
             if args.scheduler == 'plateau':
-                scheduler.step(val_results['f1_macro'])
+                scheduler.step(val_f1)
             else:
                 scheduler.step()
     
@@ -342,7 +362,7 @@ def main(args):
     print("="*60)
     print(f"Best F1 macro: {best_f1:.4f}")
     
-    final_results = evaluate(model, val_loader, device)
+    final_results = evaluate(model, val_loader, criterion, device)
     print(f"\nFinal validation results:")
     print(f"  Accuracy: {final_results['accuracy']:.4f}")
     print(f"  F1 Macro: {final_results['f1_macro']:.4f}")

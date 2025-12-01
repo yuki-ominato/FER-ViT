@@ -1,5 +1,6 @@
 """
 事前学習Transformer + StyleGAN潜在コードの学習スクリプト
+学習曲線の属性を統一: train_loss, train_acc, train_f1, val_loss, val_acc, val_f1
 """
 
 import os
@@ -60,15 +61,10 @@ def calculate_class_weights(dataset: LatentFERDataset) -> torch.Tensor:
 
 
 def get_optimizer_groups(model: HybridLatentViT, lr: float, weight_decay: float):
-    """
-    レイヤーごとに異なる学習率を設定
-    - Input projection: lr * 10
-    - Transformer: lr
-    - Head: lr * 10
-    """
+    """レイヤーごとに異なる学習率を設定"""
     param_groups = []
     
-    # Input projection（高学習率）
+    # Input projection(高学習率)
     input_proj_params = list(model.input_proj.parameters())
     if len(input_proj_params) > 0:
         param_groups.append({
@@ -78,7 +74,7 @@ def get_optimizer_groups(model: HybridLatentViT, lr: float, weight_decay: float)
         })
         print(f"Input projection: lr={lr*10:.2e}")
     
-    # Transformer（基準学習率）
+    # Transformer(基準学習率)
     transformer_params = [p for p in model.transformer.parameters() if p.requires_grad]
     if len(transformer_params) > 0:
         param_groups.append({
@@ -88,7 +84,7 @@ def get_optimizer_groups(model: HybridLatentViT, lr: float, weight_decay: float)
         })
         print(f"Transformer: lr={lr:.2e}, params={len(transformer_params)}")
     
-    # Adapter（ある場合）
+    # Adapter(ある場合)
     if model.use_adapter:
         adapter_params = [p for p in model.adapters.parameters() if p.requires_grad]
         if len(adapter_params) > 0:
@@ -99,7 +95,7 @@ def get_optimizer_groups(model: HybridLatentViT, lr: float, weight_decay: float)
             })
             print(f"Adapters: lr={lr*10:.2e}")
     
-    # Head（高学習率）
+    # Head(高学習率)
     head_params = list(model.head.parameters())
     if len(head_params) > 0:
         param_groups.append({
@@ -114,7 +110,7 @@ def get_optimizer_groups(model: HybridLatentViT, lr: float, weight_decay: float)
     param_groups.append({
         'params': other_params,
         'lr': lr * 5,
-        'weight_decay': 0,  # 位置埋め込みには weight decay を適用しない
+        'weight_decay': 0,
     })
     print(f"Position/CLS: lr={lr*5:.2e}")
     
@@ -122,8 +118,11 @@ def get_optimizer_groups(model: HybridLatentViT, lr: float, weight_decay: float)
 
 
 def train_epoch(model, loader, optimizer, criterion, device):
+    """1エポックの学習(損失、精度、F1スコアを返す)"""
     model.train()
     total_loss = 0.0
+    all_preds = []
+    all_labels = []
     
     for latents, labels in loader:
         latents = latents.to(device)
@@ -136,13 +135,24 @@ def train_epoch(model, loader, optimizer, criterion, device):
         optimizer.step()
         
         total_loss += loss.item() * latents.size(0)
+        
+        # 予測結果を記録
+        preds = logits.argmax(dim=1)
+        all_preds.extend(preds.cpu().numpy())
+        all_labels.extend(labels.cpu().numpy())
     
-    return total_loss / len(loader.dataset)
+    avg_loss = total_loss / len(loader.dataset)
+    accuracy = accuracy_score(all_labels, all_preds)
+    f1 = f1_score(all_labels, all_preds, average='macro')
+    
+    return avg_loss, accuracy, f1
 
 
 @torch.no_grad()
-def evaluate(model, loader, device):
+def evaluate(model, loader, criterion, device):
+    """モデルの評価(損失、精度、F1スコアを返す)"""
     model.eval()
+    total_loss = 0.0
     all_preds = []
     all_labels = []
     
@@ -151,16 +161,20 @@ def evaluate(model, loader, device):
         labels = labels.to(device)
         
         logits = model(latents)
+        loss = criterion(logits, labels)
         preds = logits.argmax(dim=1)
         
+        total_loss += loss.item() * latents.size(0)
         all_preds.extend(preds.cpu().numpy())
         all_labels.extend(labels.cpu().numpy())
     
+    avg_loss = total_loss / len(loader.dataset)
     accuracy = accuracy_score(all_labels, all_preds)
     f1_macro = f1_score(all_labels, all_preds, average='macro')
     f1_weighted = f1_score(all_labels, all_preds, average='weighted')
     
     return {
+        'loss': avg_loss,
         'accuracy': accuracy,
         'f1_macro': f1_macro,
         'f1_weighted': f1_weighted,
@@ -288,33 +302,47 @@ def main(args):
     best_f1 = 0.0
     
     for epoch in range(1, args.epochs + 1):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        train_results = evaluate(model, train_loader, device)
-        val_results = evaluate(model, val_loader, device)
+        # 訓練
+        train_loss, train_acc, train_f1 = train_epoch(
+            model, train_loader, optimizer, criterion, device
+        )
+        
+        # 検証
+        val_results = evaluate(model, val_loader, criterion, device)
+        val_loss = val_results['loss']
+        val_acc = val_results['accuracy']
+        val_f1 = val_results['f1_macro']
         
         print(f"Epoch {epoch}/{args.epochs}: "
-              f"train_acc={train_results['accuracy']:.4f} "
-              f"train_loss={train_loss:.4f} "
-              f"val_acc={val_results['accuracy']:.4f} "
-              f"f1={val_results['f1_macro']:.4f}")
+              f"train_loss={train_loss:.4f} train_acc={train_acc:.4f} train_f1={train_f1:.4f} "
+              f"val_loss={val_loss:.4f} val_acc={val_acc:.4f} val_f1={val_f1:.4f}")
         
-        logger.log_learning_curves(train_loss, val_results, epoch)
+        # 統一された学習曲線のログ記録
+        metrics = {
+            'train_loss': train_loss,
+            'train_acc': train_acc,
+            'train_f1': train_f1,
+            'val_loss': val_loss,
+            'val_acc': val_acc,
+            'val_f1': val_f1,
+        }
+        logger.log_metrics(metrics, epoch)
         logger.log_learning_rate(optimizer, epoch)
         
         if epoch % 10 == 0:
             logger.log_parameters(model, epoch)
             logger.log_gradients(model, epoch)
         
-        is_best = val_results['f1_macro'] > best_f1
+        is_best = val_f1 > best_f1
         if is_best:
-            best_f1 = val_results['f1_macro']
+            best_f1 = val_f1
             print(f"  → Best model (F1: {best_f1:.4f})")
         
         logger.save_checkpoint(model, optimizer, epoch, val_results, is_best)
         
         if scheduler is not None:
             if args.scheduler == 'plateau':
-                scheduler.step(val_results['f1_macro'])
+                scheduler.step(val_f1)
             else:
                 scheduler.step()
     
@@ -324,7 +352,7 @@ def main(args):
     print("="*60)
     print(f"Best F1: {best_f1:.4f}")
     
-    final_results = evaluate(model, val_loader, device)
+    final_results = evaluate(model, val_loader, criterion, device)
     emotion_names = ['Angry', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sad', 'Surprise']
     print("\nClassification Report:")
     print(classification_report(

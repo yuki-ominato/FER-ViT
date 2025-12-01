@@ -1,8 +1,6 @@
 """
 潜在空間CNN学習スクリプト
-ViTと同じ入力（StyleGAN潜在コード）でCNNを学習
-
-train_latent_vit.pyのViT部分をCNNに置き換えたバージョン
+学習曲線の属性を統一: train_loss, train_acc, train_f1, val_loss, val_acc, val_f1
 """
 
 import os
@@ -36,12 +34,6 @@ def set_seed(seed: int = 42) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-    # 決定論的アルゴリズムは一部の演算で問題を起こすため無効化
-    # MaxPoolなどがサポートされていない
-    # try:
-    #     torch.use_deterministic_algorithms(True)
-    # except Exception:
-    #     pass
 
 
 def create_subset_dataset(dataset: LatentFERDataset, fraction: float, seed: int = 42):
@@ -110,63 +102,75 @@ def calculate_class_weights(dataset) -> torch.Tensor:
 
 
 def train_epoch(model, loader, optimizer, criterion, device):
+    """1エポックの学習(損失、精度、F1スコアを返す)"""
     model.train()
     total_loss = 0.0
-    for latents, labels in loader:
-        latents = latents.to(device)
-        labels = labels.to(device)
-
-        # --- Mixup Implementation ---
-        # 50%の確率、または常時適用するかは実験次第ですが、今回は常時適用例
-        alpha = 1.0
-        if alpha > 0:
-            # Beta分布から混合比率lamをサンプリング
-            lam = np.random.beta(alpha, alpha)
-        else:
-            lam = 1.0
-
-        # バッチ内のデータをシャッフル
-        index = torch.randperm(latents.size(0)).to(device)
-
-        # 潜在ベクトルを混ぜる (StyleGANの空間では、これが中間の顔になる)
-        mixed_latents = lam * latents + (1 - lam) * latents[index]
-
-        # ラベルも混ぜる必要があるため、Loss計算時に処理する
-        # ----------------------------
-
-        optimizer.zero_grad()
-        
-        # 混ぜたベクトルを入力
-        logits = model(mixed_latents)
-
-        # Lossの計算（元のラベルと、混ぜた相手のラベルの加重平均）
-        loss = lam * criterion(logits, labels) + (1 - lam) * criterion(logits, labels[index])
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item() * latents.size(0)
-    return total_loss / len(loader.dataset)
-
-
-@torch.no_grad()
-def evaluate(model, loader, device):
-    model.eval()
     all_preds = []
     all_labels = []
     
     for latents, labels in loader:
         latents = latents.to(device)
         labels = labels.to(device)
+
+        # Mixup
+        alpha = 1.0
+        if alpha > 0:
+            lam = np.random.beta(alpha, alpha)
+        else:
+            lam = 1.0
+
+        index = torch.randperm(latents.size(0)).to(device)
+        mixed_latents = lam * latents + (1 - lam) * latents[index]
+
+        optimizer.zero_grad()
+        logits = model(mixed_latents)
+        loss = lam * criterion(logits, labels) + (1 - lam) * criterion(logits, labels[index])
+        loss.backward()
+        optimizer.step()
+        
+        total_loss += loss.item() * latents.size(0)
+        
+        # 予測結果を記録(Mixupなしの元のデータで)
+        with torch.no_grad():
+            logits_orig = model(latents)
+            preds = logits_orig.argmax(dim=1)
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+    
+    avg_loss = total_loss / len(loader.dataset)
+    accuracy = accuracy_score(all_labels, all_preds)
+    f1 = f1_score(all_labels, all_preds, average='macro')
+    
+    return avg_loss, accuracy, f1
+
+
+@torch.no_grad()
+def evaluate(model, loader, criterion, device):
+    """モデルの評価(損失、精度、F1スコアを返す)"""
+    model.eval()
+    total_loss = 0.0
+    all_preds = []
+    all_labels = []
+    
+    for latents, labels in loader:
+        latents = latents.to(device)
+        labels = labels.to(device)
+        
         logits = model(latents)
+        loss = criterion(logits, labels)
         preds = logits.argmax(dim=1)
         
+        total_loss += loss.item() * latents.size(0)
         all_preds.extend(preds.cpu().numpy())
         all_labels.extend(labels.cpu().numpy())
     
+    avg_loss = total_loss / len(loader.dataset)
     accuracy = accuracy_score(all_labels, all_preds)
     f1_macro = f1_score(all_labels, all_preds, average='macro')
     f1_weighted = f1_score(all_labels, all_preds, average='weighted')
     
     return {
+        'loss': avg_loss,
         'accuracy': accuracy,
         'f1_macro': f1_macro,
         'f1_weighted': f1_weighted,
@@ -300,30 +304,46 @@ def main(args):
     best_f1 = 0.0
     
     for epoch in range(1, args.epochs + 1):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        val_results = evaluate(model, val_loader, device)
+        # 訓練
+        train_loss, train_acc, train_f1 = train_epoch(
+            model, train_loader, optimizer, criterion, device
+        )
+        
+        # 検証
+        val_results = evaluate(model, val_loader, criterion, device)
+        val_loss = val_results['loss']
+        val_acc = val_results['accuracy']
+        val_f1 = val_results['f1_macro']
         
         print(f"Epoch {epoch}/{args.epochs}: "
-              f"loss={train_loss:.4f} "
-              f"val_acc={val_results['accuracy']:.4f} "
-              f"val_f1={val_results['f1_macro']:.4f}")
+              f"train_loss={train_loss:.4f} train_acc={train_acc:.4f} train_f1={train_f1:.4f} "
+              f"val_loss={val_loss:.4f} val_acc={val_acc:.4f} val_f1={val_f1:.4f}")
 
-        logger.log_learning_curves(train_loss, val_results, epoch)
+        # 統一された学習曲線のログ記録
+        metrics = {
+            'train_loss': train_loss,
+            'train_acc': train_acc,
+            'train_f1': train_f1,
+            'val_loss': val_loss,
+            'val_acc': val_acc,
+            'val_f1': val_f1,
+        }
+        logger.log_metrics(metrics, epoch)
         logger.log_learning_rate(optimizer, epoch)
         
         if epoch % 10 == 0:
             logger.log_parameters(model, epoch)
             logger.log_gradients(model, epoch)
 
-        is_best = val_results['f1_macro'] > best_f1
+        is_best = val_f1 > best_f1
         if is_best:
-            best_f1 = val_results['f1_macro']
+            best_f1 = val_f1
             print(f"  → Best model (F1: {best_f1:.4f})")
             logger.save_checkpoint(model, optimizer, epoch, val_results, is_best)
 
         if scheduler is not None:
             if args.scheduler == 'plateau':
-                scheduler.step(val_results['f1_macro'])
+                scheduler.step(val_f1)
             else:
                 scheduler.step()
 
@@ -334,7 +354,7 @@ def main(args):
     print(f"使用データ割合: {args.data_fraction*100:.1f}%")
     print(f"Best F1 macro: {best_f1:.4f}")
     
-    final_results = evaluate(model, val_loader, device)
+    final_results = evaluate(model, val_loader, criterion, device)
     emotion_names = ['Angry', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sad', 'Surprise']
     print(f"\nClassification Report:")
     print(classification_report(final_results['labels'], final_results['predictions'], 
@@ -366,11 +386,9 @@ if __name__ == "__main__":
                        help="使用する訓練データの割合 (0.0 < fraction <= 1.0)")
     
     # 学習設定
-    parser.add_argument("--epochs", type=int, default=60, 
-                       help="学習エポック数（ViTと同じ60を推奨）")
+    parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=1e-4,
-                       help="学習率（ViTと比較するため同じ値を推奨）")
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=1e-2)
     parser.add_argument("--scheduler", choices=['none', 'cosine', 'plateau'], default='plateau')
     parser.add_argument("--use_class_weights", action='store_true')
@@ -382,8 +400,7 @@ if __name__ == "__main__":
     parser.add_argument("--seq_len", type=int, default=0,
                        help="Sequence length (0 for auto-detection)")
     parser.add_argument("--num_classes", type=int, default=7)
-    parser.add_argument("--dropout", type=float, default=0.3,
-                       help="ドロップアウト率（CNNは0.3が良い）")
+    parser.add_argument("--dropout", type=float, default=0.3)
     
     # その他
     parser.add_argument("--seed", type=int, default=42)

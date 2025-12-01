@@ -1,6 +1,6 @@
 """
-LatentViT学習スクリプト（データセット削減機能付き）
---data_fraction オプションで使用するデータの割合を指定可能
+LatentViT学習スクリプト(データセット削減機能付き)
+学習曲線の属性を統一: train_loss, train_acc, train_f1, val_loss, val_acc, val_f1
 """
 
 import os
@@ -41,43 +41,29 @@ def set_seed(seed: int = 42) -> None:
 
 
 def create_subset_dataset(dataset: LatentFERDataset, fraction: float, seed: int = 42):
-    """
-    データセットをクラスバランスを保ちながら削減
-    
-    Args:
-        dataset: 元のデータセット
-        fraction: 使用するデータの割合 (0.0 < fraction <= 1.0)
-        seed: ランダムシード
-    
-    Returns:
-        Subset: 削減されたデータセット
-    """
+    """データセットをクラスバランスを保ちながら削減"""
     if fraction >= 1.0:
         return dataset
     
-    # 各サンプルのラベルを取得
     labels = []
     for i in range(len(dataset)):
         _, label = dataset[i]
         labels.append(label)
     
-    # クラス別にインデックスを分類
     class_indices = {}
     for idx, label in enumerate(labels):
         if label not in class_indices:
             class_indices[label] = []
         class_indices[label].append(idx)
     
-    # 各クラスから指定割合のサンプルを選択
     selected_indices = []
     print(f"\nデータセット削減: {fraction*100:.1f}% を使用")
     print("="*60)
     
     for class_id, indices in sorted(class_indices.items()):
         n_samples = len(indices)
-        n_select = max(1, int(n_samples * fraction))  # 最低1サンプルは残す
+        n_select = max(1, int(n_samples * fraction))
         
-        # 再現性のためにシード固定してサンプリング
         np.random.seed(seed)
         selected = np.random.choice(indices, n_select, replace=False)
         selected_indices.extend(selected)
@@ -95,7 +81,6 @@ def calculate_class_weights(dataset) -> torch.Tensor:
     """クラス重みを計算"""
     labels = []
     
-    # Subsetの場合とそうでない場合で処理を分ける
     if isinstance(dataset, Subset):
         for idx in dataset.indices:
             _, label = dataset.dataset[idx]
@@ -121,64 +106,75 @@ def calculate_class_weights(dataset) -> torch.Tensor:
 
 
 def train_epoch(model, loader, optimizer, criterion, device):
+    """1エポックの学習(損失、精度、F1スコアを返す)"""
     model.train()
     total_loss = 0.0
-    for latents, labels in loader:
-        latents = latents.to(device)
-        labels = labels.to(device)
-
-        # --- Mixup Implementation ---
-        # 50%の確率、または常時適用するかは実験次第ですが、今回は常時適用例
-        alpha = 1.0
-        if alpha > 0:
-            # Beta分布から混合比率lamをサンプリング
-            lam = np.random.beta(alpha, alpha)
-        else:
-            lam = 1.0
-
-        # バッチ内のデータをシャッフル
-        index = torch.randperm(latents.size(0)).to(device)
-
-        # 潜在ベクトルを混ぜる (StyleGANの空間では、これが中間の顔になる)
-        mixed_latents = lam * latents + (1 - lam) * latents[index]
-
-        # ラベルも混ぜる必要があるため、Loss計算時に処理する
-        # ----------------------------
-
-        optimizer.zero_grad()
-        
-        # 混ぜたベクトルを入力
-        logits = model(mixed_latents)
-
-        # Lossの計算（元のラベルと、混ぜた相手のラベルの加重平均）
-        loss = lam * criterion(logits, labels) + (1 - lam) * criterion(logits, labels[index])
-        
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item() * latents.size(0)
-    return total_loss / len(loader.dataset)
-
-
-@torch.no_grad()
-def evaluate(model, loader, device):
-    model.eval()
     all_preds = []
     all_labels = []
     
     for latents, labels in loader:
         latents = latents.to(device)
         labels = labels.to(device)
+
+        # Mixup
+        alpha = 1.0
+        if alpha > 0:
+            lam = np.random.beta(alpha, alpha)
+        else:
+            lam = 1.0
+
+        index = torch.randperm(latents.size(0)).to(device)
+        mixed_latents = lam * latents + (1 - lam) * latents[index]
+
+        optimizer.zero_grad()
+        logits = model(mixed_latents)
+        loss = lam * criterion(logits, labels) + (1 - lam) * criterion(logits, labels[index])
+        loss.backward()
+        optimizer.step()
+        
+        total_loss += loss.item() * latents.size(0)
+        
+        # 予測結果を記録(Mixupなしの元のデータで)
+        with torch.no_grad():
+            logits_orig = model(latents)
+            preds = logits_orig.argmax(dim=1)
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+    
+    avg_loss = total_loss / len(loader.dataset)
+    accuracy = accuracy_score(all_labels, all_preds)
+    f1 = f1_score(all_labels, all_preds, average='macro')
+    
+    return avg_loss, accuracy, f1
+
+
+@torch.no_grad()
+def evaluate(model, loader, criterion, device):
+    """モデルの評価(損失、精度、F1スコアを返す)"""
+    model.eval()
+    total_loss = 0.0
+    all_preds = []
+    all_labels = []
+    
+    for latents, labels in loader:
+        latents = latents.to(device)
+        labels = labels.to(device)
+        
         logits = model(latents)
+        loss = criterion(logits, labels)
         preds = logits.argmax(dim=1)
         
+        total_loss += loss.item() * latents.size(0)
         all_preds.extend(preds.cpu().numpy())
         all_labels.extend(labels.cpu().numpy())
     
+    avg_loss = total_loss / len(loader.dataset)
     accuracy = accuracy_score(all_labels, all_preds)
     f1_macro = f1_score(all_labels, all_preds, average='macro')
     f1_weighted = f1_score(all_labels, all_preds, average='weighted')
     
     return {
+        'loss': avg_loss,
         'accuracy': accuracy,
         'f1_macro': f1_macro,
         'f1_weighted': f1_weighted,
@@ -277,7 +273,7 @@ def main(args):
         'use_class_weights': args.use_class_weights,
         'scheduler': args.scheduler,
         'seed': args.seed,
-        'data_fraction': args.data_fraction,  # 重要: データ削減率を記録
+        'data_fraction': args.data_fraction,
     }
     
     config = {
@@ -292,7 +288,7 @@ def main(args):
         },
     }
     
-    # 実験ロガー初期化（データ削減率を名前に含める）
+    # 実験ロガー初期化
     base_name = create_experiment_name(model_config, training_config)
     experiment_name = f"{base_name}_frac{int(args.data_fraction*100)}"
     logger = ExperimentLogger(experiment_name, base_dir="experiments")
@@ -306,30 +302,46 @@ def main(args):
     best_f1 = 0.0
     
     for epoch in range(1, args.epochs + 1):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        val_results = evaluate(model, val_loader, device)
+        # 訓練
+        train_loss, train_acc, train_f1 = train_epoch(
+            model, train_loader, optimizer, criterion, device
+        )
+        
+        # 検証
+        val_results = evaluate(model, val_loader, criterion, device)
+        val_loss = val_results['loss']
+        val_acc = val_results['accuracy']
+        val_f1 = val_results['f1_macro']
         
         print(f"Epoch {epoch}/{args.epochs}: "
-              f"loss={train_loss:.4f} "
-              f"val_acc={val_results['accuracy']:.4f} "
-              f"val_f1={val_results['f1_macro']:.4f}")
+              f"train_loss={train_loss:.4f} train_acc={train_acc:.4f} train_f1={train_f1:.4f} "
+              f"val_loss={val_loss:.4f} val_acc={val_acc:.4f} val_f1={val_f1:.4f}")
 
-        logger.log_learning_curves(train_loss, val_results, epoch)
+        # 統一された学習曲線のログ記録
+        metrics = {
+            'train_loss': train_loss,
+            'train_acc': train_acc,
+            'train_f1': train_f1,
+            'val_loss': val_loss,
+            'val_acc': val_acc,
+            'val_f1': val_f1,
+        }
+        logger.log_metrics(metrics, epoch)
         logger.log_learning_rate(optimizer, epoch)
         
         if epoch % 10 == 0:
             logger.log_parameters(model, epoch)
             logger.log_gradients(model, epoch)
 
-        is_best = val_results['f1_macro'] > best_f1
+        is_best = val_f1 > best_f1
         if is_best:
-            best_f1 = val_results['f1_macro']
+            best_f1 = val_f1
             print(f"  → Best model (F1: {best_f1:.4f})")
             logger.save_checkpoint(model, optimizer, epoch, val_results, is_best)
 
         if scheduler is not None:
             if args.scheduler == 'plateau':
-                scheduler.step(val_results['f1_macro'])
+                scheduler.step(val_f1)
             else:
                 scheduler.step()
 
@@ -340,7 +352,7 @@ def main(args):
     print(f"使用データ割合: {args.data_fraction*100:.1f}%")
     print(f"Best F1 macro: {best_f1:.4f}")
     
-    final_results = evaluate(model, val_loader, device)
+    final_results = evaluate(model, val_loader, criterion, device)
     emotion_names = ['Angry', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sad', 'Surprise']
     print(f"\nClassification Report:")
     print(classification_report(final_results['labels'], final_results['predictions'], 
@@ -394,7 +406,6 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # データ割合の検証
     if args.data_fraction <= 0.0 or args.data_fraction > 1.0:
         raise ValueError(f"data_fraction must be in (0.0, 1.0], got {args.data_fraction}")
     
