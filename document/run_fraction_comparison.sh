@@ -64,13 +64,13 @@ for fraction in "${FRACTIONS[@]}"; do
         --seed 42
 done
 
-echo ""
-echo "============================================"
-echo "Experiments Completed. Generating Plots..."
-echo "============================================"
+# echo ""
+# echo "============================================"
+# echo "Experiments Completed. Generating Plots..."
+# echo "============================================"
 
-python scripts/plot_data_efficiency.py \
-    --experiments_dir experiments \
-    --output_dir figures
+# python scripts/plot_data_efficiency.py \
+#     --experiments_dir experiments \
+#     --output_dir figures
 
-echo "Done! Check figures/ folder."
+# echo "Done! Check figures/ folder."
