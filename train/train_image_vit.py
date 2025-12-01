@@ -12,7 +12,7 @@ from collections import Counter
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from sklearn.metrics import accuracy_score, f1_score, classification_report
 import numpy as np
 
@@ -40,6 +40,43 @@ def set_seed(seed: int = 42) -> None:
     except Exception:
         pass
 
+def create_subset_dataset(dataset: ImageFERDataset, fraction: float, seed: int = 42):
+    """データセットをクラスバランスを保ちながら削減 (画像用高速版)"""
+    if fraction >= 1.0:
+        return dataset
+    
+    # 画像データセットからラベルリストを取得 (画像を読み込まずパスから取得)
+    # dataset.samples は (image_path, label_id) のリスト
+    labels = [label for _, label in dataset.samples]
+    
+    class_indices = {}
+    for idx, label in enumerate(labels):
+        if label not in class_indices:
+            class_indices[label] = []
+        class_indices[label].append(idx)
+    
+    selected_indices = []
+    print(f"\nデータセット削減: {fraction*100:.1f}% を使用")
+    print("="*60)
+    
+    # クラス名取得用
+    label_to_class = dataset.LABEL_TO_CLASS
+    
+    for class_id, indices in sorted(class_indices.items()):
+        n_samples = len(indices)
+        n_select = max(1, int(n_samples * fraction))
+        
+        np.random.seed(seed)
+        selected = np.random.choice(indices, n_select, replace=False)
+        selected_indices.extend(selected)
+        
+        emotion_name = label_to_class.get(class_id, str(class_id))
+        print(f"  {emotion_name:>8s}: {n_samples:>5d} → {n_select:>5d} ({n_select/n_samples*100:.1f}%)")
+    
+    print(f"  {'Total':>8s}: {len(labels):>5d} → {len(selected_indices):>5d}")
+    print("="*60)
+    
+    return Subset(dataset, selected_indices)
 
 def calculate_class_weights(dataset: ImageFERDataset) -> torch.Tensor:
     """クラス重みを計算(不均衡データ対応)"""
@@ -135,20 +172,26 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    # データセット準備
+# データセット準備
     print("\n" + "="*60)
     print("Loading datasets...")
     print("="*60)
     
     train_transform = get_train_transforms(args.img_size) if args.use_augmentation else get_val_transforms(args.img_size)
     val_transform = get_val_transforms(args.img_size)
-    
-    train_ds = ImageFERDataset(
+
+    train_ds_full = ImageFERDataset(
         args.train_dir,
         transform=train_transform,
         img_size=args.img_size
     )
     
+    # データ削減の適用
+    if args.data_fraction < 1.0:
+        train_ds = create_subset_dataset(train_ds_full, args.data_fraction, args.seed)
+    else:
+        train_ds = train_ds_full
+
     val_ds = ImageFERDataset(
         args.val_dir,
         transform=val_transform,
@@ -281,6 +324,7 @@ def main(args):
         'label_smoothing': args.label_smoothing,
         'grad_clip': args.grad_clip,
         'seed': args.seed,
+        'data_fraction': args.data_fraction,
     }
     
     data_config = {
@@ -433,6 +477,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_class_weights", action='store_true', help="Use class weights")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--data_fraction", type=float, default=1.0, help="Data fraction")
     
     args = parser.parse_args()
     main(args)
