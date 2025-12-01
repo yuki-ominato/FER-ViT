@@ -78,9 +78,19 @@ def create_subset_dataset(dataset: ImageFERDataset, fraction: float, seed: int =
     
     return Subset(dataset, selected_indices)
 
-def calculate_class_weights(dataset: ImageFERDataset) -> torch.Tensor:
-    """クラス重みを計算(不均衡データ対応)"""
-    labels = [label for _, label in dataset.samples]
+def calculate_class_weights(dataset) -> torch.Tensor:
+    """クラス重みを計算"""
+    labels = []
+    
+    if isinstance(dataset, Subset):
+        for idx in dataset.indices:
+            _, label = dataset.dataset[idx]
+            labels.append(label)
+    else:
+        for i in range(len(dataset)):
+            _, label = dataset[i]
+            labels.append(label)
+    
     class_counts = Counter(labels)
     total_samples = len(labels)
     num_classes = len(class_counts)
