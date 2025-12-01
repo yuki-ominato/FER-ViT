@@ -121,7 +121,7 @@ class ExperimentLogger:
     
     def save_checkpoint(self, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
                     epoch: int, metrics: Dict[str, float], is_best: bool = False):
-        """チェックポイントを保存（PyTorch 2.6対応）"""
+        """チェックポイントを保存（ベストと最新のみを残す）"""
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
@@ -131,14 +131,15 @@ class ExperimentLogger:
             'run_id': self.run_id,
         }
         
-        # 通常のチェックポイント
-        ckpt_path = os.path.join(self.run_dir, "checkpoints", f"epoch_{epoch}.pt")
+        # 1. 最新モデル (last_model.pt)
+        # 毎回上書き保存することで、学習終了時には「最終エポック」のモデルのみが残ります
+        last_path = os.path.join(self.run_dir, "checkpoints", "last_model.pt")
         
-        # PyTorch 2.6対応: _use_new_zipfile_serializationを無効化
-        # これにより古いバージョンとの互換性を保つ
-        torch.save(checkpoint, ckpt_path, _use_new_zipfile_serialization=False)
+        # PyTorch 2.6対応: 古い形式との互換性維持
+        torch.save(checkpoint, last_path, _use_new_zipfile_serialization=False)
         
-        # ベストモデル
+        # 2. ベストモデル (best_model.pt)
+        # 精度更新時のみ保存
         if is_best:
             best_path = os.path.join(self.run_dir, "checkpoints", "best_model.pt")
             torch.save(checkpoint, best_path, _use_new_zipfile_serialization=False)
