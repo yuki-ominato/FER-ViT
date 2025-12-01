@@ -3,8 +3,8 @@
 # データセットパス設定
 LATENT_TRAIN="latents/train"
 LATENT_VAL="latents/val"
-IMAGE_TRAIN="dataset/fer2013/train"
-IMAGE_VAL="dataset/fer2013/val"
+IMAGE_TRAIN="../dataset/fer2013/train"
+IMAGE_VAL="../dataset/fer2013/val"
 
 # 共通ハイパーパラメータ (公平な比較のため統一)
 # LatentViTのデフォルト(Small)に合わせる
@@ -28,21 +28,21 @@ for fraction in "${FRACTIONS[@]}"; do
     echo ""
     echo ">>> Testing with Data Fraction: ${fraction}"
     
-    # 1. 提案手法 (Latent ViT)
-    echo "--- Training Proposed Method (Latent ViT) ---"
-    python train/train_latent_vit.py \
-        --latent_train_dir "$LATENT_TRAIN" \
-        --latent_val_dir "$LATENT_VAL" \
-        --data_fraction "$fraction" \
-        --depth $DEPTH \
-        --heads $HEADS \
-        --embed_dim $EMBED_DIM \
-        --mlp_dim $MLP_DIM \
-        --epochs $EPOCHS \
-        --batch_size $BATCH_SIZE \
-        --lr $LR \
-        --use_class_weights \
-        --seed 42
+    # # 1. 提案手法 (Latent ViT)
+    # echo "--- Training Proposed Method (Latent ViT) ---"
+    # python train/train_latent_vit.py \
+    #     --latent_train_dir "$LATENT_TRAIN" \
+    #     --latent_val_dir "$LATENT_VAL" \
+    #     --data_fraction "$fraction" \
+    #     --depth $DEPTH \
+    #     --heads $HEADS \
+    #     --embed_dim $EMBED_DIM \
+    #     --mlp_dim $MLP_DIM \
+    #     --epochs $EPOCHS \
+    #     --batch_size $BATCH_SIZE \
+    #     --lr $LR \
+    #     --use_class_weights \
+    #     --seed 42
 
     # 2. 従来手法 (Image ViT - Scratch)
     # create_vit_small等は使わず、カスタムサイズを指定して構造を統一
