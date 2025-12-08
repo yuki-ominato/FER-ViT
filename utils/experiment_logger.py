@@ -222,10 +222,15 @@ class ExperimentLogger:
 
 
 def create_experiment_name(model_config: Dict[str, Any], 
-                          training_config: Dict[str, Any]) -> str:
+                          training_config: Dict[str, Any],
+                          is_latent: bool = True) -> str:
+                          
     """実験名を自動生成"""
     # モデル設定からキー情報を抽出
-    model_name = f"latent_vit_d{model_config.get('depth', 6)}_h{model_config.get('heads', 8)}"
+    if is_latent:
+        model_name = f"latent_vit_d{model_config.get('depth', 6)}_h{model_config.get('heads', 8)}"
+    else:
+        model_name = f"image_vit_d{model_config.get('depth', 6)}_h{model_config.get('heads', 8)}"
     
     # 学習設定からキー情報を抽出
     lr = training_config.get('lr', 1e-4)
