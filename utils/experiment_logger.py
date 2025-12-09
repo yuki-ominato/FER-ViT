@@ -24,8 +24,7 @@ class ExperimentLogger:
         
         # タイムスタンプ付きの実行ID
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.run_id = f"{experiment_name}_{timestamp}"
-        self.run_dir = os.path.join(self.experiment_dir, self.run_id)
+        self.run_dir = os.path.join(self.experiment_dir, f"{timestamp}")
         
         # ディレクトリ作成
         os.makedirs(self.run_dir, exist_ok=True)
