@@ -12,7 +12,8 @@ DEPTH=6
 HEADS=8
 EMBED_DIM=512
 MLP_DIM=2048
-EPOCHS=60
+EPOCHS_latent=60
+EPOCHS_image=200
 BATCH_SIZE=64
 LR=1e-4
 
@@ -28,21 +29,21 @@ for fraction in "${FRACTIONS[@]}"; do
     echo ""
     echo ">>> Testing with Data Fraction: ${fraction}"
     
-    # # 1. 提案手法 (Latent ViT)
-    # echo "--- Training Proposed Method (Latent ViT) ---"
-    # python train/train_latent_vit.py \
-    #     --latent_train_dir "$LATENT_TRAIN" \
-    #     --latent_val_dir "$LATENT_VAL" \
-    #     --data_fraction "$fraction" \
-    #     --depth $DEPTH \
-    #     --heads $HEADS \
-    #     --embed_dim $EMBED_DIM \
-    #     --mlp_dim $MLP_DIM \
-    #     --epochs $EPOCHS \
-    #     --batch_size $BATCH_SIZE \
-    #     --lr $LR \
-    #     --use_class_weights \
-    #     --seed 42
+    # 1. 提案手法 (Latent ViT)
+    echo "--- Training Proposed Method (Latent ViT) ---"
+    python train/train_latent_vit.py \
+        --latent_train_dir "$LATENT_TRAIN" \
+        --latent_val_dir "$LATENT_VAL" \
+        --data_fraction "$fraction" \
+        --depth $DEPTH \
+        --heads $HEADS \
+        --embed_dim $EMBED_DIM \
+        --mlp_dim $MLP_DIM \
+        --epochs $EPOCHS \
+        --batch_size $BATCH_SIZE \
+        --lr $LR \
+        --use_class_weights \
+        --seed 42
 
     # 2. 従来手法 (Image ViT - Scratch)
     # create_vit_small等は使わず、カスタムサイズを指定して構造を統一
@@ -56,7 +57,7 @@ for fraction in "${FRACTIONS[@]}"; do
         --heads $HEADS \
         --embed_dim $EMBED_DIM \
         --mlp_dim $MLP_DIM \
-        --epochs $EPOCHS \
+        --epochs $EPOCHS_image \
         --batch_size $BATCH_SIZE \
         --lr $LR \
         --use_class_weights \
