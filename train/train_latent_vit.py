@@ -22,7 +22,7 @@ project_root = os.path.dirname(current_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from data.latent_dataset import LatentFERDataset
+from data.latent_dataset import LatentFERDataset, get_latent_train_transforms, get_latent_val_transforms
 from models_fer_vit.latent_vit import LatentViT
 from utils.experiment_logger import ExperimentLogger, create_experiment_name
 
@@ -117,7 +117,7 @@ def train_epoch(model, loader, optimizer, criterion, device):
         labels = labels.to(device)
 
         # Mixup
-        alpha = 1.0
+        alpha = args.alpha
         if alpha > 0:
             lam = np.random.beta(alpha, alpha)
         else:
@@ -193,8 +193,17 @@ def main(args):
     print("データセット読み込み中...")
     print("="*60)
     
-    train_ds_full = LatentFERDataset(args.latent_train_dir)
-    val_ds = LatentFERDataset(args.latent_val_dir)
+    train_transform = None
+    if args.use_augmentation:
+        train_transform = get_latent_train_transforms(
+            noise_std=args.latent_noise,
+            scale_range=(0.9, 1.1),
+            mask_prob=args.latent_mask)
+
+    val_transform = get_latent_val_transforms()
+
+    train_ds_full = LatentFERDataset(args.latent_train_dir, transform=train_transform)
+    val_ds = LatentFERDataset(args.latent_val_dir, transform=val_transform)
     
     # データセット削減
     if args.data_fraction < 1.0:
@@ -239,9 +248,9 @@ def main(args):
     if args.use_class_weights:
         class_weights = calculate_class_weights(train_ds).to(device)
         print(f"\nクラス重み: {class_weights}")
-        criterion = nn.CrossEntropyLoss(weight=class_weights)
+        criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=args.label_smoothing)
     else:
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
 
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     
@@ -382,6 +391,9 @@ if __name__ == "__main__":
     parser.add_argument("--latent_val_dir", required=True)
     parser.add_argument("--data_fraction", type=float, default=1.0,
                        help="使用する訓練データの割合 (0.0 < fraction <= 1.0)")
+    parser.add_argument("--use_augmentation", action='store_true', help="Use data augmentation")
+    parser.add_argument("--latent_noise", type=float, default=0.1, help="Noise level for latent augmentation")
+    parser.add_argument("--latent_mask", type=float, default=0.1, help="Mask probability for latent augmentation")
     
     # 学習設定
     parser.add_argument("--epochs", type=int, default=60)
@@ -390,6 +402,7 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay", type=float, default=1e-2)
     parser.add_argument("--scheduler", choices=['none', 'cosine', 'plateau'], default='plateau')
     parser.add_argument("--use_class_weights", action='store_true')
+    parser.add_argument("--alpha", type=float, default=1.0, help="Alpha for Mixup")
     
     # モデル設定
     parser.add_argument("--latent_dim", type=int, default=512)
