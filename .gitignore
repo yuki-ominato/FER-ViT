@@ -208,6 +208,7 @@ latents/
 
 # results
 experiments/
+eval_results/
 checkpoints/
 logs/
 tensorboard_logs/
