@@ -117,7 +117,7 @@ def train_epoch(model, loader, optimizer, criterion, device):
         labels = labels.to(device)
 
         # Mixup
-        alpha = args.alpha
+        alpha = args.mixup
         if alpha > 0:
             lam = np.random.beta(alpha, alpha)
         else:
@@ -283,6 +283,7 @@ def main(args):
         'scheduler': args.scheduler,
         'seed': args.seed,
         'data_fraction': args.data_fraction,
+        'mixup': args.mixup
     }
     
     config = {
@@ -402,7 +403,7 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay", type=float, default=1e-2)
     parser.add_argument("--scheduler", choices=['none', 'cosine', 'plateau'], default='plateau')
     parser.add_argument("--use_class_weights", action='store_true')
-    parser.add_argument("--alpha", type=float, default=1.0, help="Alpha for Mixup")
+    parser.add_argument("--mixup", type=float, default=1.0, help="Alpha for Mixup")
     
     # モデル設定
     parser.add_argument("--latent_dim", type=int, default=512)

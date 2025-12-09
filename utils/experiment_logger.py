@@ -227,17 +227,23 @@ def create_experiment_name(model_config: Dict[str, Any],
                           
     """実験名を自動生成"""
     # モデル設定からキー情報を抽出
+    # depth, heads, dropoutを使用
     if is_latent:
-        model_name = f"latent_vit_d{model_config.get('depth', 6)}_h{model_config.get('heads', 8)}"
+        model_name = f"latent_vit_d{model_config.get('depth', 6)}_h{model_config.get('heads', 8)}_do{model_config.get('dropout', 0.1)}"
     else:
-        model_name = f"image_vit_d{model_config.get('depth', 6)}_h{model_config.get('heads', 8)}"
+        model_name = f"image_vit_d{model_config.get('depth', 6)}_h{model_config.get('heads', 8)}_do{model_config.get('dropout', 0.1)}"
     
     # 学習設定からキー情報を抽出
     lr = training_config.get('lr', 1e-4)
     batch_size = training_config.get('batch_size', 64)
     epochs = training_config.get('epochs', 60)
+    mixup = training_config.get('mixup', 1.0)
     
-    training_name = f"lr{lr}_bs{batch_size}_ep{epochs}"
+    if is_latent:
+        training_name = f"lr{lr}_bs{batch_size}_ep{epochs}_Mixup{mixup}"
+    else:
+        training_name = f"lr{lr}_bs{batch_size}_ep{epochs}"
+
     
     # エンコーダ情報（設定に含まれている場合）
     encoder_info = ""
