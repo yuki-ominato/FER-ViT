@@ -127,7 +127,7 @@ class ExperimentLogger:
             'optimizer_state_dict': optimizer.state_dict(),
             'metrics': metrics,
             'config': self.config,
-            'run_id': self.run_id,
+            'run_id': self.run_dir,
         }
         
         # 1. 最新モデル (last_model.pt)

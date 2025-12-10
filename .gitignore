@@ -207,6 +207,7 @@ third_party/
 latents/
 
 # results
+encode_results/
 experiments/
 eval_results/
 checkpoints/
