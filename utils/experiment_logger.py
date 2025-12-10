@@ -198,7 +198,7 @@ class ExperimentLogger:
         
         summary = {
             'experiment_name': self.experiment_name,
-            'run_id': self.run_id,
+            'run_id': self.run_dir,
             'duration_seconds': duration,
             'final_metrics': final_metrics,
             'config': self.config,
