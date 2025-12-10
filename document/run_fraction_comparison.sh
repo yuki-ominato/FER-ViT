@@ -41,7 +41,7 @@ for fraction in "${FRACTIONS[@]}"; do
         --heads $HEADS \
         --embed_dim $EMBED_DIM \
         --mlp_dim $MLP_DIM \
-        --epochs $EPOCHS \
+        --epochs $EPOCHS_latent \
         --batch_size $BATCH_SIZE \
         --lr $LR \
         --use_class_weights \
