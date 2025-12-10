@@ -8,7 +8,7 @@ IMAGE_VAL="../dataset/fer2013/val"
 
 # 共通ハイパーパラメータ (公平な比較のため統一)
 # LatentViTのデフォルト(Small)に合わせる
-DEPTH=6
+DEPTH=2
 HEADS=8
 EMBED_DIM=512
 MLP_DIM=2048
@@ -16,6 +16,8 @@ EPOCHS_latent=60
 EPOCHS_image=200
 BATCH_SIZE=64
 LR=1e-4
+MIXUP_ALPHA=0.0
+DROPOUT=0.1
 
 # データ割合リスト
 FRACTIONS=(0.1 0.25 0.5 1.0)
@@ -43,6 +45,9 @@ for fraction in "${FRACTIONS[@]}"; do
         --batch_size $BATCH_SIZE \
         --lr $LR \
         --use_class_weights \
+        --mixup $MIXUP_ALPHA \
+        --dropout $DROPOUT \
+        --label_smoothing 0.1 \
         --seed 42
 
     # 2. 従来手法 (Image ViT - Scratch)
@@ -61,7 +66,8 @@ for fraction in "${FRACTIONS[@]}"; do
         --batch_size $BATCH_SIZE \
         --lr $LR \
         --use_class_weights \
-        --use_augmentation \
+        --label_smoothing 0.1 \
+        --dropout $DROPOUT \
         --seed 42
 done
 
