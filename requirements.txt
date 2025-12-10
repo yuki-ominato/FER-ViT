@@ -10,6 +10,7 @@ opencv-python>=4.5.0
 scikit-learn>=1.0.0
 matplotlib>=3.5.0
 seaborn>=0.11.0
+git+https://github.com/CompVis/taming-transformers.git@master#egg=taming-transformers
 
 # TensorBoard logging
 tensorboard>=2.8.0

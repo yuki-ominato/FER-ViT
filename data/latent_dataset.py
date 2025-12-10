@@ -46,8 +46,7 @@ class LatentAugment:
                 mask = torch.rand_like(out) > self.mask_prob
                 out = out * mask.float()
                 
-        return out
-
+        return out    
 
 class LatentFERDataset(Dataset):
     """
@@ -150,7 +149,6 @@ def get_latent_train_transforms(
         scale_range=scale_range,
         mask_prob=mask_prob
     )
-
 
 def get_latent_val_transforms() -> None:
     """
