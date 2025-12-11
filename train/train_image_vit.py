@@ -237,7 +237,7 @@ def main(args):
     elif args.model_size == 'base':
         model = create_vit_base(num_classes=args.num_classes, img_size=args.img_size)
     elif args.use_pretrained:
-        model = timm.create_model('vit_small_patch224', pretrained=True, num_classes=7)
+        model = timm.create_model('vit_small_patch16_224', pretrained=True, num_classes=7)
     else:
         model = ImageViT(
             img_size=args.img_size,
