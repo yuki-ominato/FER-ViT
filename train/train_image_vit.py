@@ -12,6 +12,7 @@ from collections import Counter
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import timm
 from torch.utils.data import DataLoader, Subset
 from sklearn.metrics import accuracy_score, f1_score, classification_report
 import numpy as np
@@ -235,6 +236,8 @@ def main(args):
         model = create_vit_small(num_classes=args.num_classes, img_size=args.img_size)
     elif args.model_size == 'base':
         model = create_vit_base(num_classes=args.num_classes, img_size=args.img_size)
+    elif args.use_pretrained:
+        model = timm.create_model('vit_small_patch224', pretrained=True, num_classes=7)
     else:
         model = ImageViT(
             img_size=args.img_size,
@@ -472,6 +475,7 @@ if __name__ == "__main__":
     parser.add_argument("--mlp_dim", type=int, default=1536, help="MLP dimension")
     parser.add_argument("--num_classes", type=int, default=7, help="Number of classes")
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
+    parser.add_argument("--use_pretrained", action='store_true', help="Use pre-trained model")
     
     # 学習設定
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
