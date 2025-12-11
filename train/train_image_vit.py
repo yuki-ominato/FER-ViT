@@ -230,14 +230,16 @@ def main(args):
     print("Creating model...")
     print("="*60)
     
-    if args.model_size == 'tiny':
+    if args.use_pretrained:
+        print("Loading ImageNet pretrained model via timm...")
+        # 必要に応じてモデル名を引数で変えられるようにしても良い
+        model = timm.create_model('vit_small_patch16_224', pretrained=True, num_classes=args.num_classes)
+    elif args.model_size == 'tiny':
         model = create_vit_tiny(num_classes=args.num_classes, img_size=args.img_size)
     elif args.model_size == 'small':
         model = create_vit_small(num_classes=args.num_classes, img_size=args.img_size)
     elif args.model_size == 'base':
         model = create_vit_base(num_classes=args.num_classes, img_size=args.img_size)
-    elif args.use_pretrained:
-        model = timm.create_model('vit_small_patch16_224', pretrained=True, num_classes=7)
     else:
         model = ImageViT(
             img_size=args.img_size,
@@ -475,7 +477,7 @@ if __name__ == "__main__":
     parser.add_argument("--mlp_dim", type=int, default=1536, help="MLP dimension")
     parser.add_argument("--num_classes", type=int, default=7, help="Number of classes")
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
-    parser.add_argument("--use_pretrained", action='store_false', help="Use pre-trained model")
+    parser.add_argument("--use_pretrained", action='store_true', help="Use ImageNet pre-trained model")
     
     # 学習設定
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
