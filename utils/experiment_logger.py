@@ -222,7 +222,8 @@ class ExperimentLogger:
 
 def create_experiment_name(model_config: Dict[str, Any], 
                           training_config: Dict[str, Any],
-                          is_latent: bool = True) -> str:
+                          is_latent: bool = True,
+                          is_pretrained: bool = False) -> str:
                           
     """実験名を自動生成"""
     # モデル設定からキー情報を抽出
@@ -240,6 +241,8 @@ def create_experiment_name(model_config: Dict[str, Any],
     
     if is_latent:
         training_name = f"lr{lr}_bs{batch_size}_ep{epochs}_Mixup{mixup}"
+    elif is_pretrained:
+        training_name = f"lr{lr}_bs{batch_size}_ep{epochs}_pretrained"
     else:
         training_name = f"lr{lr}_bs{batch_size}_ep{epochs}"
 
