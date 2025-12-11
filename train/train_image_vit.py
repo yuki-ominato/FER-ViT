@@ -354,7 +354,7 @@ def main(args):
     }
     
     # 実験ロガー初期化
-    base_name = create_experiment_name(model_config, training_config, is_latent=False)
+    base_name = create_experiment_name(model_config, training_config, is_latent=False, is_pretrained=args.use_pretrained)
     experiment_name = f"{base_name}_frac{int(args.data_fraction*100)}"
     logger = ExperimentLogger(experiment_name, base_dir="experiments")
     logger.log_config(config)
