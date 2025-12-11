@@ -475,7 +475,7 @@ if __name__ == "__main__":
     parser.add_argument("--mlp_dim", type=int, default=1536, help="MLP dimension")
     parser.add_argument("--num_classes", type=int, default=7, help="Number of classes")
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
-    parser.add_argument("--use_pretrained", action='store_true', help="Use pre-trained model")
+    parser.add_argument("--use_pretrained", action='store_false', help="Use pre-trained model")
     
     # 学習設定
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
