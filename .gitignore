@@ -209,6 +209,7 @@ latents/
 # results
 encode_results/
 experiments/
+experiments_other/
 eval_results/
 checkpoints/
 logs/
