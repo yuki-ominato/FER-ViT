@@ -23,8 +23,11 @@ def parse_experiments(experiments_dir):
             metrics = summary.get('final_metrics', {})
             
             # モデルタイプの判別 (簡易的なロジック)
-            if 'latent' in summary.get('experiment_name', ''):
+            exp_name = summary.get('experiment_name', '')
+            if 'latent_vit' in exp_name:
                 model_type = "Latent ViT (Proposed)"
+            elif 'latent_cnn' in exp_name:
+                model_type = "Latent CNN (Comparison)"
             else:
                 model_type = "Image ViT (Baseline)"
             
