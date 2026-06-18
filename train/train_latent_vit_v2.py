@@ -375,7 +375,7 @@ def main(args):
     emotion_names = ['Angry', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sad', 'Surprise']
     print(f"\nClassification Report:")
     print(classification_report(final_results['labels'], final_results['predictions'],
-                                target_names=emotion_names))
+                                target_names=emotion_names, zero_division=0))
 
     logger.log_confusion_matrix(final_results['labels'], final_results['predictions'],
                                 emotion_names, args.epochs)
