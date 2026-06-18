@@ -230,9 +230,10 @@ def main(args):
     print("\n" + "=" * 60)
     print("モデル初期化中...")
     print("=" * 60)
-    print(f"  use_lwn : {args.use_lwn}")
-    print(f"  use_spe : {args.use_spe}")
-    print(f"  use_leam: {args.use_leam}")
+    print(f"  use_lwn         : {args.use_lwn}")
+    print(f"  use_lwn_residual: {args.use_lwn_residual}")
+    print(f"  use_spe         : {args.use_spe}")
+    print(f"  use_leam        : {args.use_leam}")
 
     model = LatentViTv2(
         latent_dim=args.latent_dim,
@@ -244,6 +245,7 @@ def main(args):
         num_classes=args.num_classes,
         dropout=args.dropout,
         use_lwn=args.use_lwn,
+        use_lwn_residual=args.use_lwn_residual,
         use_spe=args.use_spe,
         use_leam=args.use_leam,
     ).to(device)
@@ -278,6 +280,7 @@ def main(args):
         'num_classes': args.num_classes,
         'dropout': args.dropout,
         'use_lwn': args.use_lwn,
+        'use_lwn_residual': args.use_lwn_residual,
         'use_spe': args.use_spe,
         'use_leam': args.use_leam,
     }
@@ -426,9 +429,10 @@ if __name__ == "__main__":
     parser.add_argument("--dropout", type=float, default=0.1)
 
     # v2 追加フラグ（アブレーション実験用）
-    parser.add_argument("--use_lwn",  action="store_true", help="LayerWiseNormを使用")
-    parser.add_argument("--use_spe",  action="store_true", help="SemanticPEを使用")
-    parser.add_argument("--use_leam", action="store_true", help="LEAMを使用")
+    parser.add_argument("--use_lwn",          action="store_true", help="LayerWiseNormを使用")
+    parser.add_argument("--use_lwn_residual", action="store_true", help="LWNで残差ゲートを使用（スケール情報保持）")
+    parser.add_argument("--use_spe",          action="store_true", help="SemanticPEを使用")
+    parser.add_argument("--use_leam",         action="store_true", help="LEAMを使用")
 
     # その他
     parser.add_argument("--seed", type=int, default=42)

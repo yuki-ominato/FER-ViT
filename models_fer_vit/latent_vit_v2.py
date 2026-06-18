@@ -9,12 +9,13 @@ class LatentViTv2(nn.Module):
     LatentViT v2：前処理モジュール統合版
 
     既存のLatentViTに以下のモジュールをオプションで追加する。
-        - use_lwn  : LayerWiseNorm（層別正規化）
-        - use_spe  : SemanticPE（意味的位置エンコーディング）
-        - use_leam : LEAM（層別アテンションマスク）
+        - use_lwn          : LayerWiseNorm（層別正規化）
+        - use_lwn_residual : LWNに残差ゲートを使用（スケール情報保持）
+        - use_spe          : SemanticPE（意味的位置エンコーディング）
+        - use_leam         : LEAM（層別アテンションマスク）
 
     前処理の適用順：
-        w+ → [LayerWiseNorm] → [SemanticPE] → [LEAM] → LatentViT
+        w+ → [SemanticPE] → [LayerWiseNorm] → [LEAM] → LatentViT
 
     Args:
         latent_dim (int): w+の次元数。デフォルト512。
@@ -26,6 +27,7 @@ class LatentViTv2(nn.Module):
         num_classes (int): 分類クラス数。デフォルト7。
         dropout (float): ドロップアウト率。デフォルト0.1。
         use_lwn (bool): LayerWiseNormを使用するか。デフォルトFalse。
+        use_lwn_residual (bool): LWNで残差ゲートを使用するか。デフォルトFalse。
         use_spe (bool): SemanticPEを使用するか。デフォルトFalse。
         use_leam (bool): LEAMを使用するか。デフォルトFalse。
     """
@@ -41,13 +43,14 @@ class LatentViTv2(nn.Module):
         num_classes: int = 7,
         dropout: float = 0.1,
         use_lwn: bool = False,
+        use_lwn_residual: bool = False,
         use_spe: bool = False,
         use_leam: bool = False,
     ):
         super().__init__()
 
         # 前処理モジュール（オプション）
-        self.lwn  = LayerWiseNorm(seq_len, latent_dim) if use_lwn  else nn.Identity()
+        self.lwn  = LayerWiseNorm(seq_len, latent_dim, use_residual=use_lwn_residual) if use_lwn else nn.Identity()
         self.spe  = SemanticPE(latent_dim, seq_len)    if use_spe  else nn.Identity()
         self.leam = LEAM(seq_len)                      if use_leam else nn.Identity()
 
@@ -64,9 +67,10 @@ class LatentViTv2(nn.Module):
         )
 
         # フラグを保持（ログ・デバッグ用）
-        self.use_lwn  = use_lwn
-        self.use_spe  = use_spe
-        self.use_leam = use_leam
+        self.use_lwn          = use_lwn
+        self.use_lwn_residual = use_lwn_residual
+        self.use_spe          = use_spe
+        self.use_leam         = use_leam
 
     def forward(self, w_plus: torch.Tensor) -> torch.Tensor:
         """
@@ -75,8 +79,8 @@ class LatentViTv2(nn.Module):
         Returns:
             logits: (B, num_classes)
         """
-        x = self.lwn(w_plus)   # LayerWiseNorm
-        x = self.spe(x)        # SemanticPE
+        x = self.spe(w_plus)   # SemanticPE
+        x = self.lwn(x)        # LayerWiseNorm
         x = self.leam(x)       # LEAM
         return self.backbone(x)
 
@@ -91,6 +95,7 @@ class LatentViTv2(nn.Module):
         return {
             "model": "LatentViTv2",
             "use_lwn": self.use_lwn,
+            "use_lwn_residual": self.use_lwn_residual,
             "use_spe": self.use_spe,
             "use_leam": self.use_leam,
         }
