@@ -11,7 +11,7 @@ Usage example:
         --batch_size   8
 
 Checkpoints saved to <out_dir>/<run_id>/checkpoints/:
-    best_model.pt  — training loss が改善したエポックを保存（上書き）
+    best_model.pt  — val loss（または train loss）が改善したエポックを保存（上書き）
     last_model.pt  — 毎エポック上書き（学習再開用）
 
 Image provider selection:
@@ -80,8 +80,66 @@ def load_generator(psp_path: str, device: torch.device) -> tuple:
 
 
 # ------------------------------------------------------------------------------
-# Training
+# Training / Validation
 # ------------------------------------------------------------------------------
+
+def run_epoch(
+    h: nn.Module,
+    generator: nn.Module,
+    face_pool: nn.Module,
+    criterion: AFSLoss,
+    provider,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer | None,
+    device: torch.device,
+) -> dict:
+    """
+    Train または Validation の1エポック処理。
+
+    optimizer が None の場合は validation モード（勾配なし、パラメータ更新なし）。
+    """
+    is_train = optimizer is not None
+    h.train() if is_train else h.eval()
+    totals = {"loss": 0.0, "id": 0.0, "lpips": 0.0, "cons": 0.0}
+    n_batches = 0
+
+    ctx = torch.enable_grad() if is_train else torch.no_grad()
+    with ctx:
+        for w_src, _, paths_src, w_tgt, _, paths_tgt in loader:
+            w_src = w_src.to(device)
+            w_tgt = w_tgt.to(device)
+
+            w_sty_src = h(w_src)
+            w_sty_tgt = h(w_tgt)
+            w_new = (w_src - w_sty_src) + w_sty_tgt
+            w_sty_new = h(w_new)
+
+            img_gen, _ = generator(
+                [w_new],
+                input_is_latent=True,
+                randomize_noise=False,
+                return_latents=False,
+            )
+            img_gen = face_pool(img_gen)
+
+            img_src = provider.get_images(w_src, list(paths_src), device)
+            img_tgt = provider.get_images(w_tgt, list(paths_tgt), device)
+
+            loss, metrics = criterion(img_gen, img_src, img_tgt, w_sty_new, w_sty_tgt)
+
+            if is_train:
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(h.parameters(), max_norm=1.0)
+                optimizer.step()
+
+            totals["loss"] += loss.item()
+            for k in ("id", "lpips", "cons"):
+                totals[k] += metrics[k]
+            n_batches += 1
+
+    return {k: v / n_batches for k, v in totals.items()}
+
 
 def train_one_epoch(
     h: nn.Module,
@@ -93,49 +151,19 @@ def train_one_epoch(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
 ) -> dict:
-    h.train()
-    totals = {"loss": 0.0, "id": 0.0, "lpips": 0.0, "cons": 0.0}
-    n_batches = 0
+    return run_epoch(h, generator, face_pool, criterion, provider, loader, optimizer, device)
 
-    for w_src, _, paths_src, w_tgt, _, paths_tgt in loader:
-        w_src = w_src.to(device)   # [B, 18, 512]
-        w_tgt = w_tgt.to(device)
 
-        # --- Forward through StyleExtractor ---
-        w_sty_src = h(w_src)                          # [B, 18, 512]
-        w_sty_tgt = h(w_tgt)
-        w_new = (w_src - w_sty_src) + w_sty_tgt       # swapped latent
-        w_sty_new = h(w_new)                           # for consistency loss
-
-        # --- Generate swapped image (gradient flows through generator) ---
-        img_gen, _ = generator(
-            [w_new],
-            input_is_latent=True,
-            randomize_noise=False,
-            return_latents=False,
-        )
-        img_gen = face_pool(img_gen)   # [B, 3, 256, 256]
-
-        # --- Reference images (no gradient) ---
-        paths_src = list(paths_src)
-        paths_tgt = list(paths_tgt)
-        img_src = provider.get_images(w_src, paths_src, device)
-        img_tgt = provider.get_images(w_tgt, paths_tgt, device)
-
-        # --- Loss ---
-        loss, metrics = criterion(img_gen, img_src, img_tgt, w_sty_new, w_sty_tgt)
-
-        optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(h.parameters(), max_norm=1.0)
-        optimizer.step()
-
-        totals["loss"] += loss.item()
-        for k in ("id", "lpips", "cons"):
-            totals[k] += metrics[k]
-        n_batches += 1
-
-    return {k: v / n_batches for k, v in totals.items()}
+def evaluate(
+    h: nn.Module,
+    generator: nn.Module,
+    face_pool: nn.Module,
+    criterion: AFSLoss,
+    provider,
+    loader: DataLoader,
+    device: torch.device,
+) -> dict:
+    return run_epoch(h, generator, face_pool, criterion, provider, loader, None, device)
 
 
 # ------------------------------------------------------------------------------
@@ -144,8 +172,12 @@ def train_one_epoch(
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train AFS Style Extractor")
-    p.add_argument("--latent_dir",   required=True,
-                   help="Directory with cached .pt latent files")
+    p.add_argument("--latent_dir",     required=True,
+                   help="Directory with cached .pt latent files (train)")
+    p.add_argument("--val_latent_dir", default=None,
+                   help="Directory with cached .pt latent files (val). "
+                        "指定した場合、val loss で best_model を判定する。"
+                        "省略時は train loss にフォールバック。")
     p.add_argument("--psp_path",     required=True,
                    help="Path to pSp checkpoint (.pt) containing StyleGAN2 decoder")
     p.add_argument("--arcface_path", required=True,
@@ -206,6 +238,18 @@ def main() -> None:
         pin_memory=(device.type == "cuda"),
     )
 
+    val_loader = None
+    if args.val_latent_dir is not None:
+        val_dataset = PairLatentDataset(args.val_latent_dir)
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=0,
+            pin_memory=(device.type == "cuda"),
+        )
+        print(f"Validation set: {len(val_dataset)} samples")
+
     # --- Optimiser ---
     optimizer = torch.optim.Adam(h.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -217,37 +261,54 @@ def main() -> None:
     best_loss = float("inf")
     best_model_path = os.path.join(ckpt_dir, "best_model.pt")
     last_model_path = os.path.join(ckpt_dir, "last_model.pt")
+    monitor_key = "val_loss" if val_loader is not None else "train_loss"
+    print(f"Best model criterion: {monitor_key}")
 
     for epoch in range(1, args.epochs + 1):
-        metrics = train_one_epoch(
+        train_metrics = train_one_epoch(
             h, generator, face_pool, criterion, provider, loader, optimizer, device
         )
         scheduler.step()
 
-        log.append({"epoch": epoch, **metrics})
+        row = {"epoch": epoch, **{f"train_{k}": v for k, v in train_metrics.items()}}
+
         print(
             f"Epoch {epoch:3d}/{args.epochs}  "
-            f"loss={metrics['loss']:.4f}  "
-            f"id={metrics['id']:.4f}  "
-            f"lpips={metrics['lpips']:.4f}  "
-            f"cons={metrics['cons']:.4f}"
+            f"train_loss={train_metrics['loss']:.4f}  "
+            f"id={train_metrics['id']:.4f}  "
+            f"lpips={train_metrics['lpips']:.4f}  "
+            f"cons={train_metrics['cons']:.4f}",
+            end="",
         )
+
+        if val_loader is not None:
+            val_metrics = evaluate(
+                h, generator, face_pool, criterion, provider, val_loader, device
+            )
+            row.update({f"val_{k}": v for k, v in val_metrics.items()})
+            print(f"  val_loss={val_metrics['loss']:.4f}", end="")
+            monitor_loss = val_metrics["loss"]
+        else:
+            monitor_loss = train_metrics["loss"]
+
+        print()
+        log.append(row)
 
         ckpt = {
             "epoch": epoch,
             "model_state": h.state_dict(),
             "optimizer_state": optimizer.state_dict(),
-            "loss": metrics["loss"],
+            monitor_key: monitor_loss,
         }
 
         # last_model は毎エポック上書き
         torch.save(ckpt, last_model_path)
 
-        # best_model は損失が改善したときのみ保存
-        if metrics["loss"] < best_loss:
-            best_loss = metrics["loss"]
+        # best_model は監視対象の損失が改善したときのみ保存
+        if monitor_loss < best_loss:
+            best_loss = monitor_loss
             torch.save(ckpt, best_model_path)
-            print(f"  → best_model saved (loss={best_loss:.4f})")
+            print(f"  → best_model saved ({monitor_key}={best_loss:.4f})")
 
     with open(os.path.join(out_dir, "train_log.json"), "w") as f:
         json.dump(log, f, indent=2)
