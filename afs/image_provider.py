@@ -18,7 +18,9 @@ matching the input expectations of ArcFace and LPIPS.
 """
 
 import abc
-from typing import List
+import os
+from pathlib import Path
+from typing import List, Optional
 
 import torch
 import torch.nn as nn
@@ -91,8 +93,24 @@ class DiskImageProvider(ImageProvider):
     """
     案B: load the original image from the path stored in each .pt file.
 
-    img_paths must not contain empty strings; each must be a valid file path.
+    Args:
+        img_root: 画像ディレクトリのルートパス（例: ``../dataset/fer2013/train``）。
+
+            - 指定なし: .pt に保存されたパスを CWD 基準で絶対パスに解決して使用。
+            - 指定あり: 保存パスの末尾2成分（``class/filename.jpg``）のみを取り出し、
+              ``img_root / class / filename.jpg`` として再構成する。
+              .pt 生成時のディレクトリ構造が現在の環境と異なる場合に使用する。
     """
+
+    def __init__(self, img_root: Optional[str] = None) -> None:
+        self.img_root = img_root
+
+    def _resolve(self, p: str) -> str:
+        if self.img_root is not None:
+            parts = Path(p).parts
+            # 末尾2成分: (class_dir, filename)
+            return str(Path(self.img_root) / parts[-2] / parts[-1])
+        return os.path.abspath(p)
 
     def get_images(
         self,
@@ -101,7 +119,7 @@ class DiskImageProvider(ImageProvider):
         device: torch.device,
     ) -> torch.Tensor:
         imgs = torch.stack(
-            [_TO_256(Image.open(p).convert("RGB")) for p in img_paths],
+            [_TO_256(Image.open(self._resolve(p)).convert("RGB")) for p in img_paths],
             dim=0,
         )
         return imgs.to(device)
