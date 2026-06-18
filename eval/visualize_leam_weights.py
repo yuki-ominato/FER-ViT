@@ -34,9 +34,9 @@ def visualize_leam_weights(checkpoint_path: str, save_path: str = None):
 
     # 凡例
     patches = [
-        mpatches.Patch(color="#e74c3c", label="Coarse（層1〜4: 骨格・構造）"),
-        mpatches.Patch(color="#2ecc71", label="Medium（層5〜12: 表情・形状）"),
-        mpatches.Patch(color="#3498db", label="Fine（層13〜18: テクスチャ）"),
+        mpatches.Patch(color="#e74c3c", label="Coarse (layers 1-4: structure)"),
+        mpatches.Patch(color="#2ecc71", label="Medium (layers 5-12: expression)"),
+        mpatches.Patch(color="#3498db", label="Fine (layers 13-18: texture)"),
     ]
     ax.legend(handles=patches, loc="upper right")
 
@@ -52,7 +52,9 @@ def visualize_leam_weights(checkpoint_path: str, save_path: str = None):
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
         print(f"Saved: {save_path}")
-    plt.show()
+    else:
+        plt.show()
+    plt.close()
 
 
 if __name__ == "__main__":
