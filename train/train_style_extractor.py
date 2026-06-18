@@ -10,6 +10,10 @@ Usage example:
         --epochs       50 \\
         --batch_size   8
 
+Checkpoints saved to <out_dir>/<run_id>/checkpoints/:
+    best_model.pt  — training loss が改善したエポックを保存（上書き）
+    last_model.pt  — 毎エポック上書き（学習再開用）
+
 Image provider selection:
     --provider b   (default) DiskImageProvider: reads img_path stored in .pt files.
     --provider a            GeneratedImageProvider: decodes G(w_src) / G(w_tgt) each step.
@@ -155,8 +159,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lr",           type=float, default=1e-4)
     p.add_argument("--lambda_cons",  type=float, default=0.1,
                    help="Weight for consistency loss")
-    p.add_argument("--save_every",   type=int, default=10,
-                   help="Save checkpoint every N epochs")
     p.add_argument("--device",       default="cuda")
     return p.parse_args()
 
@@ -212,6 +214,10 @@ def main() -> None:
 
     # --- Training loop ---
     log = []
+    best_loss = float("inf")
+    best_model_path = os.path.join(ckpt_dir, "best_model.pt")
+    last_model_path = os.path.join(ckpt_dir, "last_model.pt")
+
     for epoch in range(1, args.epochs + 1):
         metrics = train_one_epoch(
             h, generator, face_pool, criterion, provider, loader, optimizer, device
@@ -227,17 +233,21 @@ def main() -> None:
             f"cons={metrics['cons']:.4f}"
         )
 
-        if epoch % args.save_every == 0 or epoch == args.epochs:
-            ckpt_path = os.path.join(ckpt_dir, f"epoch_{epoch:04d}.pt")
-            torch.save(
-                {
-                    "epoch": epoch,
-                    "model_state": h.state_dict(),
-                    "optimizer_state": optimizer.state_dict(),
-                },
-                ckpt_path,
-            )
-            print(f"  → Saved checkpoint: {ckpt_path}")
+        ckpt = {
+            "epoch": epoch,
+            "model_state": h.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "loss": metrics["loss"],
+        }
+
+        # last_model は毎エポック上書き
+        torch.save(ckpt, last_model_path)
+
+        # best_model は損失が改善したときのみ保存
+        if metrics["loss"] < best_loss:
+            best_loss = metrics["loss"]
+            torch.save(ckpt, best_model_path)
+            print(f"  → best_model saved (loss={best_loss:.4f})")
 
     with open(os.path.join(out_dir, "train_log.json"), "w") as f:
         json.dump(log, f, indent=2)
