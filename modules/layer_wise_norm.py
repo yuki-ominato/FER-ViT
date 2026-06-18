@@ -13,8 +13,8 @@ class LayerWiseNorm(nn.Module):
 
         out = w+ + sigmoid(gate) * (norm(w+) - w+)
 
-    gate の初期値が -2.0 のため sigmoid(-2) ≈ 0.12 となり、
-    学習初期はほぼ元のw+を維持する。
+    gate の初期値が -5.0 のため sigmoid(-5) ≈ 0.007 となり、
+    学習初期はほぼ恒等変換として振る舞う。
 
     Args:
         num_layers (int): w+のシーケンス長。pSpの場合は18。
@@ -29,8 +29,8 @@ class LayerWiseNorm(nn.Module):
         ])
         self.use_residual = use_residual
         if use_residual:
-            # 初期値 -2.0 → sigmoid(-2) ≈ 0.12（学習初期は元のw+に近い挙動）
-            self.gate = nn.Parameter(torch.full((num_layers,), -2.0))
+            # 初期値 -5.0 → sigmoid(-5) ≈ 0.007（学習初期はほぼ恒等変換）
+            self.gate = nn.Parameter(torch.full((num_layers,), -5.0))
 
     def forward(self, w_plus: torch.Tensor) -> torch.Tensor:
         """

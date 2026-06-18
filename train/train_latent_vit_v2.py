@@ -129,6 +129,8 @@ def train_epoch(model, loader, optimizer, criterion, device, args):
         logits = model(mixed_latents)
         loss = lam * criterion(logits, labels) + (1 - lam) * criterion(logits, labels[index])
         loss.backward()
+        if args.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         optimizer.step()
 
         total_loss += loss.item() * latents.size(0)
@@ -436,6 +438,8 @@ if __name__ == "__main__":
 
     # その他
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--grad_clip", type=float, default=1.0,
+                        help="勾配クリッピングのmax norm（0で無効）")
     parser.add_argument("--experiment_name", type=str, default="",
                         help="実験名（省略時は自動生成）")
 
