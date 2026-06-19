@@ -187,10 +187,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--provider",     choices=["a", "b"], default="b",
                    help="Image provider: a=GeneratedImageProvider, b=DiskImageProvider")
     p.add_argument("--img_root",     default=None,
-                   help="[案B専用] 画像ディレクトリのルート（例: ../dataset/fer2013/train）。"
+                   help="[案B専用] 訓練画像ディレクトリのルート（例: ../dataset/fer2013/train）。"
                         ".pt の img_path と実際のディレクトリ構造が異なる場合に指定する。"
                         "指定時は保存パスの末尾2成分(class/filename)のみ使用して再構成する。"
                         "省略時は保存パスを CWD 基準で絶対パス解決する。")
+    p.add_argument("--val_img_root", default=None,
+                   help="[案B専用] 検証画像ディレクトリのルート（例: ../dataset/fer2013/val）。"
+                        "省略時は --img_root を使用する。")
     p.add_argument("--epochs",       type=int, default=50)
     p.add_argument("--batch_size",   type=int, default=8)
     p.add_argument("--lr",           type=float, default=1e-4)
@@ -227,11 +230,14 @@ def main() -> None:
 
     # --- Image provider ---
     if args.provider == "b":
-        print(f"Using DiskImageProvider (案B), img_root={args.img_root!r}")
-        provider = DiskImageProvider(img_root=args.img_root)
+        val_img_root = args.val_img_root if args.val_img_root is not None else args.img_root
+        print(f"Using DiskImageProvider (案B), img_root={args.img_root!r}, val_img_root={val_img_root!r}")
+        provider     = DiskImageProvider(img_root=args.img_root)
+        val_provider = DiskImageProvider(img_root=val_img_root)
     else:
         print("Using GeneratedImageProvider (案A)")
-        provider = GeneratedImageProvider(generator, face_pool)
+        provider     = GeneratedImageProvider(generator, face_pool)
+        val_provider = provider
 
     # --- Dataset ---
     dataset = PairLatentDataset(args.latent_dir)
@@ -288,7 +294,7 @@ def main() -> None:
 
         if val_loader is not None:
             val_metrics = evaluate(
-                h, generator, face_pool, criterion, provider, val_loader, device
+                h, generator, face_pool, criterion, val_provider, val_loader, device
             )
             row.update({f"val_{k}": v for k, v in val_metrics.items()})
             print(f"  val_loss={val_metrics['loss']:.4f}", end="")
