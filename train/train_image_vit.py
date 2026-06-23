@@ -22,7 +22,7 @@ project_root = os.path.dirname(current_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from data.image_dataset import ImageFERDataset, get_train_transforms, get_val_transforms
+from data.image_dataset import ImageFERDataset, RAFDBDataset, create_image_dataset, get_train_transforms, get_val_transforms
 from models_fer_vit.image_vit import ImageViT, create_vit_small, create_vit_base, create_vit_tiny
 from utils.experiment_logger import ExperimentLogger, create_experiment_name
 
@@ -41,7 +41,7 @@ def set_seed(seed: int = 42) -> None:
     except Exception:
         pass
 
-def create_subset_dataset(dataset: ImageFERDataset, fraction: float, seed: int = 42):
+def create_subset_dataset(dataset, fraction: float, seed: int = 42):
     """データセットをクラスバランスを保ちながら削減 (画像用高速版)"""
     if fraction >= 1.0:
         return dataset
@@ -191,22 +191,26 @@ def main(args):
     train_transform = get_train_transforms(args.img_size) if args.use_augmentation else get_val_transforms(args.img_size)
     val_transform = get_val_transforms(args.img_size)
 
-    train_ds_full = ImageFERDataset(
+    train_ds_full = create_image_dataset(
+        args.dataset,
         args.train_dir,
+        split='train',
         transform=train_transform,
-        img_size=args.img_size
+        img_size=args.img_size,
     )
-    
+
     # データ削減の適用
     if args.data_fraction < 1.0:
         train_ds = create_subset_dataset(train_ds_full, args.data_fraction, args.seed)
     else:
         train_ds = train_ds_full
 
-    val_ds = ImageFERDataset(
+    val_ds = create_image_dataset(
+        args.dataset,
         args.val_dir,
+        split='test',
         transform=val_transform,
-        img_size=args.img_size
+        img_size=args.img_size,
     )
     
     train_loader = DataLoader(
@@ -462,8 +466,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Vision Transformer on image data")
     
     # データ関連
-    parser.add_argument("--train_dir", required=True, help="Training data directory")
-    parser.add_argument("--val_dir", required=True, help="Validation data directory")
+    parser.add_argument("--dataset", choices=['fer2013', 'raf-db'], default='fer2013',
+                       help="Dataset type: 'fer2013' (class-subdir format) or 'raf-db' (CSV + numbered-subdir format)")
+    parser.add_argument("--train_dir", required=True,
+                       help="Training data directory. FER2013: class subdirs; RAF-DB: dataset root")
+    parser.add_argument("--val_dir", required=True,
+                       help="Validation data directory. FER2013: class subdirs; RAF-DB: dataset root (test split)")
     parser.add_argument("--img_size", type=int, default=224, help="Image size")
     parser.add_argument("--use_augmentation", action='store_true', help="Use data augmentation")
     

@@ -1,8 +1,9 @@
 """
 画像から直接学習するためのデータセット
-FER2013などの画像データセット用
+FER2013 / RAF-DB 対応
 """
 
+import csv
 import os
 from typing import Tuple, Optional, Callable
 
@@ -134,6 +135,144 @@ class ImageFERDataset(Dataset):
             image = self.transform(image)
         
         return image, label
+
+
+class RAFDBDataset(Dataset):
+    """
+    RAF-DB データセット (CSV ラベルファイル + 番号付きサブディレクトリ形式)
+
+    ディレクトリ構造:
+    data_root/
+        train/
+            1/   (Surprise)
+            2/   (Fear)
+            ...
+            7/   (Neutral)
+        test/
+            1/ ... 7/
+        train_labels.csv
+        test_labels.csv
+
+    内部ラベル (0-6) は ImageFERDataset と共通。
+    """
+
+    # RAF-DB 公式ラベル (1-7) → 共通 0-6 へのマッピング
+    RAFDB_TO_LABEL = {
+        1: 6,  # Surprise
+        2: 2,  # Fear
+        3: 1,  # Disgust
+        4: 3,  # Happiness
+        5: 5,  # Sadness
+        6: 0,  # Anger
+        7: 4,  # Neutral
+    }
+
+    CLASS_TO_LABEL = ImageFERDataset.CLASS_TO_LABEL
+    LABEL_TO_CLASS = ImageFERDataset.LABEL_TO_CLASS
+
+    def __init__(
+        self,
+        data_root: str,
+        split: str = 'train',
+        csv_path: Optional[str] = None,
+        transform: Optional[Callable] = None,
+        img_size: int = 224,
+    ):
+        """
+        Args:
+            data_root: RAF-DB のルートディレクトリ (train/, test/, *.csv を含む)
+            split: 'train' または 'test'
+            csv_path: ラベル CSV のパス。None の場合は data_root/{split}_labels.csv を使用
+            transform: カスタム変換
+            img_size: 画像サイズ
+        """
+        self.data_root = data_root
+        self.split = split
+        self.img_size = img_size
+
+        if transform is None:
+            self.transform = transforms.Compose([
+                transforms.Resize((img_size, img_size)),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225]
+                ),
+            ])
+        else:
+            self.transform = transform
+
+        if csv_path is None:
+            csv_path = os.path.join(data_root, f'{split}_labels.csv')
+
+        self.samples = []
+        self._load_samples(csv_path)
+
+        if len(self.samples) == 0:
+            raise ValueError(f"No images found in {data_root} (split={split})")
+
+        print(f"Loaded {len(self.samples)} images from {data_root} [{split}]")
+        self._print_class_distribution()
+
+    def _load_samples(self, csv_path: str):
+        with open(csv_path, newline='') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                img_name = row['image']
+                raf_label = int(row['label'])
+                label = self.RAFDB_TO_LABEL[raf_label]
+                img_path = os.path.join(self.data_root, self.split, str(raf_label), img_name)
+                self.samples.append((img_path, label))
+
+    def _print_class_distribution(self):
+        from collections import Counter
+        labels = [label for _, label in self.samples]
+        counter = Counter(labels)
+        print("\nClass distribution:")
+        for label_id in sorted(counter.keys()):
+            class_name = self.LABEL_TO_CLASS[label_id]
+            count = counter[label_id]
+            print(f"  {class_name:>8s} (id={label_id}): {count:>5d} samples")
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+        img_path, label = self.samples[idx]
+        try:
+            image = Image.open(img_path).convert('RGB')
+        except Exception as e:
+            print(f"Error loading {img_path}: {e}")
+            image = Image.new('RGB', (self.img_size, self.img_size), color='black')
+        if self.transform:
+            image = self.transform(image)
+        return image, label
+
+
+def create_image_dataset(
+    dataset_type: str,
+    path: str,
+    split: str = 'train',
+    transform: Optional[Callable] = None,
+    img_size: int = 224,
+) -> Dataset:
+    """
+    データセット種別に応じた Dataset を返すファクトリ関数。
+
+    Args:
+        dataset_type: 'fer2013' または 'raf-db'
+        path: FER2013 の場合はクラスサブディレクトリを含むディレクトリ、
+              RAF-DB の場合はルートディレクトリ (train_labels.csv 等を含む)
+        split: RAF-DB のみ使用 ('train' / 'test')
+        transform: カスタム変換
+        img_size: 画像サイズ
+    """
+    if dataset_type == 'fer2013':
+        return ImageFERDataset(path, transform=transform, img_size=img_size)
+    elif dataset_type == 'raf-db':
+        return RAFDBDataset(path, split=split, transform=transform, img_size=img_size)
+    else:
+        raise ValueError(f"Unknown dataset_type: {dataset_type!r}. Choose 'fer2013' or 'raf-db'.")
 
 
 def get_train_transforms(img_size: int = 224) -> transforms.Compose:

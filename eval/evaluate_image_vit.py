@@ -20,7 +20,7 @@ project_root = os.path.dirname(current_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from data.image_dataset import ImageFERDataset, get_val_transforms
+from data.image_dataset import create_image_dataset, get_val_transforms
 from models_fer_vit.image_vit import ImageViT
 
 
@@ -206,7 +206,10 @@ def plot_prediction_confidence(probabilities, labels, predictions, save_path=Non
 def main():
     parser = argparse.ArgumentParser(description="Evaluate trained ImageViT model")
     parser.add_argument("--checkpoint_path", required=True, help="Path to model checkpoint")
-    parser.add_argument("--test_dir", required=True, help="Path to test images")
+    parser.add_argument("--dataset", choices=['fer2013', 'raf-db'], default='fer2013',
+                       help="Dataset type: 'fer2013' or 'raf-db'")
+    parser.add_argument("--test_dir", required=True,
+                       help="Test data directory. FER2013: class subdirs; RAF-DB: dataset root")
     parser.add_argument("--output_dir", default="eval_results", help="Output directory")
     parser.add_argument("--device", default="cuda", help="Device to use")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
@@ -229,9 +232,12 @@ def main():
     print("\n" + "="*60)
     print("Loading test dataset...")
     print("="*60)
-    test_dataset = ImageFERDataset(
+    test_dataset = create_image_dataset(
+        args.dataset,
         args.test_dir,
-        transform=get_val_transforms(args.img_size)
+        split='test',
+        transform=get_val_transforms(args.img_size),
+        img_size=args.img_size,
     )
     test_loader = DataLoader(
         test_dataset,
