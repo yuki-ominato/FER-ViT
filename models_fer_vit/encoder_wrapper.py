@@ -7,13 +7,13 @@ from PIL import Image
 from torchvision import transforms
 
 # pSp/e4e のパスを追加（third_party に配置した場合）
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'pixel2style2pixel'))
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'encoder4editing'))
-
-# プロジェクト内に pixel2style2pixel を直接配置している場合の絶対パス（PYTHONPATH不要化）
-_ABS_PSP = '/home/yuki/research2/fer-vit/third_party/pixel2style2pixel'
-if os.path.exists(_ABS_PSP) and _ABS_PSP not in sys.path:
-    sys.path.append(_ABS_PSP)
+# __file__ は models_fer_vit/ 直下なので親 1 つで project_root に到達する
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+_PSP_ROOT     = os.path.join(_PROJECT_ROOT, 'third_party', 'pixel2style2pixel')
+_E4E_ROOT     = os.path.join(_PROJECT_ROOT, 'third_party', 'encoder4editing')
+for _p in (_PSP_ROOT, _E4E_ROOT):
+    if os.path.isdir(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 
 class EncoderWrapper:
