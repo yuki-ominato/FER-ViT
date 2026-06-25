@@ -99,7 +99,7 @@ class LatentFERDataset(Dataset):
         filepath = self.samples[idx]
         
         try:
-            data = torch.load(filepath, map_location='cpu', weights_only=True)
+            data = torch.load(filepath, map_location='cpu', weights_only=False)
             
             # 必須キーの確認等は省略せず実装（安全のため）
             latent = data['latent']
@@ -122,7 +122,7 @@ class LatentFERDataset(Dataset):
         class_counts = {}
         for filepath in self.samples:
             try:
-                data = torch.load(filepath, map_location='cpu', weights_only=True)
+                data = torch.load(filepath, map_location='cpu', weights_only=False)
                 label = data['label']
                 class_counts[label] = class_counts.get(label, 0) + 1
             except:
