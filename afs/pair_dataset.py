@@ -38,6 +38,10 @@ class PairLatentDataset(Dataset):
     """
 
     def __init__(self, latent_dir: str) -> None:
+        # 絶対パスに変換する。StyleGAN2 の CUDA コンパイル等で CWD が変わっても
+        # self.files のパスが壊れないようにするため。
+        latent_dir = os.path.abspath(latent_dir)
+
         if not os.path.isdir(latent_dir):
             raise FileNotFoundError(f"Latent directory not found: {latent_dir}")
 

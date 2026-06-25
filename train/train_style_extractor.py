@@ -101,7 +101,7 @@ def run_epoch(
     """
     is_train = optimizer is not None
     h.train() if is_train else h.eval()
-    totals = {"loss": 0.0, "id": 0.0, "lpips": 0.0, "cons": 0.0}
+    totals = {"loss": 0.0, "id": 0.0, "feat": 0.0, "lpips": 0.0, "cons": 0.0}
     n_batches = 0
 
     ctx = torch.enable_grad() if is_train else torch.no_grad()
@@ -115,6 +115,8 @@ def run_epoch(
             w_new = (w_src - w_sty_src) + w_sty_tgt
             w_sty_new = h(w_new)
 
+            # G(w_new) を生成。この呼び出しで AFSLoss 内の feature hook が
+            # convs[5] の 32×32 特徴を捕捉する。
             img_gen, _ = generator(
                 [w_new],
                 input_is_latent=True,
@@ -126,7 +128,10 @@ def run_epoch(
             img_src = provider.get_images(w_src, list(paths_src), device)
             img_tgt = provider.get_images(w_tgt, list(paths_tgt), device)
 
-            loss, metrics = criterion(img_gen, img_src, img_tgt, w_sty_new, w_sty_tgt)
+            # w_tgt を渡すことで criterion 内部で G(w_tgt) の 32×32 特徴も取得し
+            # L_feat = MSE(feat32_gen, feat32_tgt) を計算する。
+            loss, metrics = criterion(img_gen, img_src, img_tgt, w_sty_new, w_sty_tgt,
+                                      w_tgt=w_tgt)
 
             if is_train:
                 optimizer.zero_grad()
@@ -135,7 +140,7 @@ def run_epoch(
                 optimizer.step()
 
             totals["loss"] += loss.item()
-            for k in ("id", "lpips", "cons"):
+            for k in ("id", "feat", "lpips", "cons"):
                 totals[k] += metrics[k]
             n_batches += 1
 
@@ -195,11 +200,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--val_img_root", default=None,
                    help="[案B専用] 検証画像ディレクトリのルート（例: ../dataset/fer2013/val）。"
                         "省略時は --img_root を使用する。")
-    p.add_argument("--epochs",       type=int, default=50)
-    p.add_argument("--batch_size",   type=int, default=8)
+    p.add_argument("--epochs",       type=int, default=10,
+                   help="論文デフォルト: 10")
+    p.add_argument("--batch_size",   type=int, default=4,
+                   help="論文デフォルト: 4")
     p.add_argument("--lr",           type=float, default=1e-4)
+    p.add_argument("--lambda_feat",  type=float, default=3.5,
+                   help="Weight for StyleGAN2 32×32 feature loss (論文: 3.5)")
     p.add_argument("--lambda_cons",  type=float, default=0.1,
-                   help="Weight for consistency loss")
+                   help="Weight for consistency loss (論文: 0.1)")
     p.add_argument("--device",       default="cuda")
     return p.parse_args()
 
@@ -224,8 +233,14 @@ def main() -> None:
     h = StyleExtractor().to(device)
     print(f"StyleExtractor parameters: {sum(p.numel() for p in h.parameters()):,}")
 
+    # generator を AFSLoss に渡す。内部で convs[5] にフックを登録し
+    # 32×32 feature loss (λ=3.5) を計算する。
+    # generator は object.__setattr__ でサブモジュール登録を回避して保持されるため
+    # criterion.to(device) の影響を受けない。
     criterion = AFSLoss(
         arcface_path=args.arcface_path,
+        generator=generator,
+        lambda_feat=args.lambda_feat,
         lambda_cons=args.lambda_cons,
     ).to(device)
 
@@ -288,6 +303,7 @@ def main() -> None:
             f"Epoch {epoch:3d}/{args.epochs}  "
             f"train_loss={train_metrics['loss']:.4f}  "
             f"id={train_metrics['id']:.4f}  "
+            f"feat={train_metrics['feat']:.4f}  "
             f"lpips={train_metrics['lpips']:.4f}  "
             f"cons={train_metrics['cons']:.4f}",
             end="",
