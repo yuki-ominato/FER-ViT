@@ -39,7 +39,8 @@ _PSP_ROOT = os.path.join(_PROJECT_ROOT, 'third_party', 'pixel2style2pixel')
 if _PSP_ROOT not in sys.path:
     sys.path.insert(0, _PSP_ROOT)
 
-from afs import StyleExtractor, AFSLoss, PairLatentDataset
+from afs import StyleExtractor, PairLatentDataset
+from afs.losses import AFSLoss
 from afs.image_provider import DiskImageProvider, GeneratedImageProvider
 
 
