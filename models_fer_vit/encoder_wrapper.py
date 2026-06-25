@@ -1,222 +1,173 @@
 import os
 import sys
+from types import SimpleNamespace
 from typing import Optional
 
 import torch
 from PIL import Image
 from torchvision import transforms
 
-# pSp/e4e のパスを追加（third_party に配置した場合）
-# __file__ は models_fer_vit/ 直下なので親 1 つで project_root に到達する
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-_PSP_ROOT     = os.path.join(_PROJECT_ROOT, 'third_party', 'pixel2style2pixel')
-_E4E_ROOT     = os.path.join(_PROJECT_ROOT, 'third_party', 'encoder4editing')
-for _p in (_PSP_ROOT, _E4E_ROOT):
-    if os.path.isdir(_p) and _p not in sys.path:
-        sys.path.insert(0, _p)
+_PSP_ROOT = os.path.join(_PROJECT_ROOT, 'third_party', 'pixel2style2pixel')
+_E4E_ROOT = os.path.join(_PROJECT_ROOT, 'third_party', 'encoder4editing')
+
+# モジュールロード時は sys.path を変更しない。
+# pSp / e4e はそれぞれ同名の `models/` パッケージを持つため、
+# 両方を同時に先頭に追加すると衝突が起きる。
+# sys.path への追加は EncoderWrapper.__init__ でエンコーダータイプに応じて行う。
 
 
 class EncoderWrapper:
     """
-    pSp / e4e 等の事前学習済みエンコーダ呼び出し用ラッパ。
-    
-    使用方法:
-    1. third_party/pixel2style2pixel または third_party/encoder4editing を配置
-    2. 事前学習済み重みを pretrained_models/ に配置
-    3. このクラスでエンコーダを初期化して使用
+    pSp / e4e 事前学習済みエンコーダ共通ラッパ。
+
+    サポートする encoder_type:
+        "psp" : pixel2style2pixel (third_party/pixel2style2pixel)
+        "e4e" : encoder4editing   (third_party/encoder4editing)
+
+    どちらも同じインターフェース（encoder + latent_avg 加算）を持つため、
+    encode_image / encode_batch は共通実装を使用する。
     """
 
     def __init__(self, model_path: str, device: str = "cuda", encoder_type: str = "psp") -> None:
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.model_path = model_path
         self.encoder_type = encoder_type.lower()
-        
+
+        if self.encoder_type not in ("psp", "e4e"):
+            raise ValueError(f"encoder_type は 'psp' または 'e4e' で指定してください: {encoder_type}")
+
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Encoder model not found: {model_path}")
 
+        # エンコーダータイプに合わせて sys.path を設定してからロード
+        self._setup_path()
         self.encoder = self._load_encoder()
 
+    def _setup_path(self) -> None:
+        """encoder_type に対応するリポジトリルートを sys.path 先頭に追加する。"""
+        root = _PSP_ROOT if self.encoder_type == "psp" else _E4E_ROOT
+        if not os.path.isdir(root):
+            raise FileNotFoundError(
+                f"{'pSp' if self.encoder_type == 'psp' else 'encoder4editing'} が見つかりません: {root}\n"
+                f"third_party/ に配置してください。"
+            )
+        if root not in sys.path:
+            sys.path.insert(0, root)
+
+    # ------------------------------------------------------------------
+    # Loader
+    # ------------------------------------------------------------------
+
     def _load_encoder(self):
-        """エンコーダをロード"""
         if self.encoder_type == "psp":
             return self._load_psp()
-        elif self.encoder_type == "e4e":
-            return self._load_e4e()
         else:
-            raise ValueError(f"Unsupported encoder type: {self.encoder_type}")
+            return self._load_e4e()
 
-    # --- 変更 1: _load_psp 内でモデルを device に移動する ---
     def _load_psp(self):
-        """pSpエンコーダをロード"""
+        """
+        pSp エンコーダをロード。
+        _setup_path() により _PSP_ROOT が sys.path 先頭にある前提。
+        """
         try:
-            from third_party.pixel2style2pixel.models.psp import pSp
-            
-            print(f"[DEBUG] Loading checkpoint from: {self.model_path}")
-            print(f"[DEBUG] Device: {self.device}")
-            
-            # チェックポイントから opts を読み込み
-            ckpt = torch.load(self.model_path, map_location=self.device, weights_only=False)
-            print(f"[DEBUG] Checkpoint keys: {list(ckpt.keys())}")
-            
-            opts_dict = ckpt.get('opts', {}) or {}
-            print(f"[DEBUG] Original opts keys: {list(opts_dict.keys())}")
-            print(f"[DEBUG] Original checkpoint_path: {opts_dict.get('checkpoint_path', 'NOT_FOUND')}")
-            
-            # 重要な設定を確実に補完
-            opts_dict['checkpoint_path'] = self.model_path  # Noneを上書き
-            opts_dict.setdefault('device', str(self.device))
-            opts_dict.setdefault('encoder_type', 'GradualStyleEncoder')
-            opts_dict.setdefault('start_from_latent_avg', True)  # チェックポイントから初期化
-            opts_dict.setdefault('learn_in_w', False)
-            opts_dict.setdefault('n_styles', 18)
-            opts_dict.setdefault('n_style', 18)
-            opts_dict.setdefault('input_nc', 3)
-            opts_dict.setdefault('output_size', 1024)
-            
-            print(f"[DEBUG] Final checkpoint_path: {opts_dict['checkpoint_path']}")
-            print(f"[DEBUG] start_from_latent_avg: {opts_dict['start_from_latent_avg']}")
-            print(f"[DEBUG] encoder_type: {opts_dict['encoder_type']}")
-            
-            from types import SimpleNamespace
-            opts = SimpleNamespace(**opts_dict)
-            
-            # モデルをロード
-            print(f"[DEBUG] Creating pSp model...")
-            model = pSp(opts)
-            # 重要: モデルを明示的に device に移動する
-            model.to(self.device)
-            model.eval()
-            print(f"[DEBUG] pSp model loaded successfully on device {self.device}")
-            return model
-            
+            from models.psp import pSp  # pSp の models/psp.py
         except ImportError as e:
-            print(f"pSp import error: {e}")
-            print("Please ensure pixel2style2pixel is in third_party/pixel2style2pixel")
-            raise RuntimeError("pSp not available. Please install pixel2style2pixel.")
+            raise RuntimeError(
+                f"pSp のインポートに失敗しました: {e}\n"
+                f"third_party/pixel2style2pixel が正しく配置されているか確認してください。"
+            )
 
-    # def _load_e4e(self):
-    #     """e4eエンコーダをロード"""
-    #     try:
-    #         # e4eは別のリポジトリなので、pSpの構造を参考に実装
-    #         # 実際のe4eリポジトリの構造に合わせて調整が必要
-    #         # from models.psp import pSp
-    #         from third_party.pixel2style2pixel.models.psp import pSp
-    #         from utils.common import tensor2im
-            
-    #         # e4e設定（pSpと同様の構造を想定）
-    #         class Opts:
-    #             def __init__(self):
-    #                 self.checkpoint_path = self.model_path
-    #                 self.device = self.device
-    #                 self.output_size = 1024
-    #                 self.encoder_type = 'GradualStyleEncoder'
-    #                 self.input_nc = 3
-    #                 self.output_nc = 3
-    #                 self.n_style = 18
-    #                 self.start_from_latent_avg = True
-    #                 self.learn_in_w = False
-    #                 self.label_nc = 0
-    #                 self.stylegan_weights = None
-            
-    #         opts = Opts()
-    #         opts.checkpoint_path = self.model_path
-    #         opts.device = self.device
-            
-    #         # モデルをロード（e4eの場合は別の実装が必要）
-    #         model = pSp(opts)  # 暫定的にpSpを使用
-    #         model.eval()
-    #         return model
-            
-    #     except ImportError as e:
-    #         print(f"e4e import error: {e}")
-    #         print("Please ensure encoder4editing is in third_party/encoder4editing")
-    #         raise RuntimeError("e4e not available. Please install encoder4editing.")
+        ckpt = torch.load(self.model_path, map_location=self.device, weights_only=False)
+        opts_dict = dict(ckpt.get('opts', {}) or {})
+        opts_dict['checkpoint_path']        = self.model_path
+        opts_dict.setdefault('device',                  str(self.device))
+        opts_dict.setdefault('encoder_type',            'GradualStyleEncoder')
+        opts_dict.setdefault('start_from_latent_avg',   True)
+        opts_dict.setdefault('learn_in_w',              False)
+        opts_dict.setdefault('n_styles',                18)
+        opts_dict.setdefault('n_style',                 18)
+        opts_dict.setdefault('input_nc',                3)
+        opts_dict.setdefault('output_size',             1024)
 
-    # --- 変更 2: preprocess は unsqueeze を行わず [C,H,W] を返す ---
+        model = pSp(SimpleNamespace(**opts_dict))
+        model.to(self.device).eval()
+        print(f"pSp loaded: {self.model_path}")
+        return model
+
+    def _load_e4e(self):
+        """
+        e4e (encoder4editing) エンコーダをロード。
+        _setup_path() により _E4E_ROOT が sys.path 先頭にある前提。
+
+        encoder4editing は pSp をベースにしており、モデルクラス名も pSp だが
+        encoder_type が 'Encoder4Editing' である点が異なる。
+        推論インターフェース（encoder + latent_avg）は pSp と同一。
+        """
+        try:
+            from models.psp import pSp  # encoder4editing の models/psp.py
+        except ImportError as e:
+            raise RuntimeError(
+                f"e4e のインポートに失敗しました: {e}\n"
+                f"third_party/encoder4editing が正しく配置されているか確認してください。"
+            )
+
+        ckpt = torch.load(self.model_path, map_location=self.device, weights_only=False)
+        opts_dict = dict(ckpt.get('opts', {}) or {})
+        opts_dict['checkpoint_path']        = self.model_path
+        opts_dict.setdefault('device',                  str(self.device))
+        opts_dict.setdefault('encoder_type',            'Encoder4Editing')
+        opts_dict.setdefault('start_from_latent_avg',   True)
+        opts_dict.setdefault('learn_in_w',              False)
+        opts_dict.setdefault('n_styles',                18)
+        opts_dict.setdefault('n_style',                 18)
+        opts_dict.setdefault('input_nc',                3)
+        opts_dict.setdefault('output_size',             1024)
+
+        model = pSp(SimpleNamespace(**opts_dict))
+        model.to(self.device).eval()
+        print(f"e4e loaded: {self.model_path}")
+        return model
+
+    # ------------------------------------------------------------------
+    # Encoding helpers (pSp / e4e 共通)
+    # ------------------------------------------------------------------
+
+    def _apply_latent_avg(self, codes: torch.Tensor) -> torch.Tensor:
+        """start_from_latent_avg が True の場合に latent_avg を加算する。"""
+        if not self.encoder.opts.start_from_latent_avg:
+            return codes
+        avg = self.encoder.latent_avg
+        if self.encoder.opts.learn_in_w:
+            return codes + avg.repeat(codes.shape[0], 1)
+        else:
+            return codes + avg.repeat(codes.shape[0], 1, 1)
+
     def preprocess(self, pil_image: Image.Image, resize: int = 256) -> torch.Tensor:
-        """画像の前処理（戻り値は tensor [C,H,W]、device に転送済み）"""
+        """PIL → [C,H,W] tensor（[-1,1]、device 転送済み）"""
         tf = transforms.Compose([
             transforms.Resize((resize, resize)),
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
         ])
-        # ここで unsqueeze はしない（一貫して [C,H,W] を返す）
-        t = tf(pil_image)
-        return t.to(self.device)
+        return tf(pil_image).to(self.device)
 
-
-    # --- 変更 3: encode_image は preprocess の後でバッチ次元を付与して渡す ---
     @torch.no_grad()
     def encode_image(self, pil_image: Image.Image) -> torch.Tensor:
-        """画像を潜在コードにエンコード"""
-        if self.encoder is None:
-            raise RuntimeError("Encoder not loaded.")
-            
-        # preprocess は [C,H,W] を返すのでバッチ次元を付与
-        x = self.preprocess(pil_image).unsqueeze(0)  # -> [1, C, H, W]
-        
-        if self.encoder_type == "psp":
-            # pSpの推論（エンコーダ部分のみを使用）
-            codes = self.encoder.encoder(x)
-            # 平均潜在コードを加算
-            if self.encoder.opts.start_from_latent_avg:
-                if self.encoder.opts.learn_in_w:
-                    codes = codes + self.encoder.latent_avg.repeat(codes.shape[0], 1)
-                else:
-                    codes = codes + self.encoder.latent_avg.repeat(codes.shape[0], 1, 1)
-            # codes shape: (1, 18, 512) for w+
-            return codes.detach().cpu()
-            
-        elif self.encoder_type == "e4e":
-            codes = self.encoder.encoder(x)
-            if self.encoder.opts.start_from_latent_avg:
-                if self.encoder.opts.learn_in_w:
-                    codes = codes + self.encoder.latent_avg.repeat(codes.shape[0], 1)
-                else:
-                    codes = codes + self.encoder.latent_avg.repeat(codes.shape[0], 1, 1)
-            return codes.detach().cpu()
-        
-        else:
-            raise ValueError(f"Unsupported encoder type: {self.encoder_type}")
+        """1 枚の画像を W+ 潜在コード [1, 18, 512] にエンコード（CPU テンソル）"""
+        x = self.preprocess(pil_image).unsqueeze(0)   # [1,C,H,W]
+        codes = self.encoder.encoder(x)
+        codes = self._apply_latent_avg(codes)
+        return codes.detach().cpu()
 
-
-    # --- 変更 4: encode_batch の stacking を正す（preprocess は [C,H,W] を返すため） ---
+    @torch.no_grad()
     def encode_batch(self, pil_images: list, batch_size: int = 4) -> torch.Tensor:
-
-        """バッチで画像をエンコード（メモリ効率化）"""
+        """複数枚をバッチ処理して W+ 潜在コード [N, 18, 512] を返す（CPU テンソル）"""
         all_latents = []
-        
         for i in range(0, len(pil_images), batch_size):
-            batch_images = pil_images[i:i + batch_size]
-            # preprocess returns [C,H,W] so stack -> [B,C,H,W]
-            batch_tensors = torch.stack([self.preprocess(img) for img in batch_images], dim=0)
-            
-            with torch.no_grad():
-                if self.encoder_type == "psp":
-                    # エンコーダ部分のみを使用
-                    codes = self.encoder.encoder(batch_tensors)
-                    if self.encoder.opts.start_from_latent_avg:
-                        if self.encoder.opts.learn_in_w:
-                            codes = codes + self.encoder.latent_avg.repeat(codes.shape[0], 1)
-                        else:
-                            codes = codes + self.encoder.latent_avg.repeat(codes.shape[0], 1, 1)
-                    latents = codes
-                elif self.encoder_type == "e4e":
-                    # e4eの推論（pSpと同様の構造を想定）
-                    codes = self.encoder.encoder(batch_tensors)
-                    if self.encoder.opts.start_from_latent_avg:
-                        if self.encoder.opts.learn_in_w:
-                            codes = codes + self.encoder.latent_avg.repeat(codes.shape[0], 1)
-                        else:
-                            codes = codes + self.encoder.latent_avg.repeat(codes.shape[0], 1, 1)
-                    latents = codes
-                else:
-                    raise ValueError(f"Unsupported encoder type: {self.encoder_type}")
-            
-            all_latents.append(latents.detach().cpu())
-        
-        # print(f"[DEBUG] batch_tensors.shape={batch_tensors.shape}, device={batch_tensors.device}, dtype={batch_tensors.dtype}")
-        # p = next(self.encoder.parameters()); print(f"[DEBUG] encoder param device={p.device}, dtype={p.dtype}")
+            batch = pil_images[i:i + batch_size]
+            x = torch.stack([self.preprocess(img) for img in batch], dim=0)  # [B,C,H,W]
+            codes = self.encoder.encoder(x)
+            codes = self._apply_latent_avg(codes)
+            all_latents.append(codes.detach().cpu())
         return torch.cat(all_latents, dim=0)
-
-
