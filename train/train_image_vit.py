@@ -328,6 +328,7 @@ def main(args):
         'mlp_dim': args.mlp_dim,
         'num_classes': args.num_classes,
         'dropout': args.dropout,
+        'use_pretrained': args.use_pretrained,
         'n_parameters': n_params,
     }
     
