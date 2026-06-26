@@ -413,7 +413,7 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay", type=float, default=0.01)
     parser.add_argument("--scheduler", choices=['none', 'cosine', 'plateau'],
                        default='plateau')
-    parser.add_argument("--use_class_weights", action='store_true')
+    parser.add_argument("--use_class_weights", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--use_layerwise_lr", action='store_true',
                        help="Use different learning rates for different layers")
     
