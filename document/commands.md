@@ -205,6 +205,34 @@ CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_image_vit.py \
   --label_smoothing 0.1
 ```
 
+### RAF-DB / ImageNet 事前学習あり・カスタムアーキテクチャ
+
+```bash
+CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_image_vit.py \
+  --dataset raf-db \
+  --train_dir ../dataset/RAF-DB \
+  --val_dir   ../dataset/RAF-DB \
+  --img_size 224 \
+  --model_size custom \
+  --patch_size 16 \
+  --embed_dim 512 \
+  --depth 6 \
+  --heads 8 \
+  --mlp_dim 2048 \
+  --num_classes 7 \
+  --dropout 0.1 \
+  --use_pretrained \
+  --epochs 50 \
+  --batch_size 64 \
+  --lr 0.0001 \
+  --weight_decay 0.05 \
+  --optimizer adamw \
+  --scheduler warmup_cosine \
+  --label_smoothing 0.1 \
+  --use_class_weights \
+  --seed 42
+```
+
 ---
 
 ## 4. LatentViT の訓練
