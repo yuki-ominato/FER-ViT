@@ -26,6 +26,54 @@ from models_fer_vit.latent_vit_v2 import LatentViTv2
 from utils.experiment_logger import ExperimentLogger, create_experiment_name
 
 
+class SVMProjector:
+    """
+    SVM 感情部分空間への射影をバッチ単位で適用するクラス。
+
+    emotion_basis_N.pt から基底 N (9216×7) を読み込み、
+    各 W+ 潜在コードをオンザフライで射影する。
+
+        w_flat     : (B, 9216)
+        coords     = w_flat @ pinv_N.T   (B, 7)   感情部分空間座標
+        w_emotion  = coords @ N.T        (B, 9216)
+        w_residual = w_flat - w_emotion  (B, 9216)
+
+    Args:
+        basis_path : emotion_basis_N.pt へのパス。
+        mode       : "emotion" → 感情成分, "residual" → 非感情成分。
+        device     : 射影を実行するデバイス。
+    """
+
+    def __init__(self, basis_path: str, mode: str, device: torch.device) -> None:
+        data = torch.load(basis_path, map_location='cpu', weights_only=True)
+        N = data['N'].float()                                              # (9216, 7)
+        pinv_N = torch.tensor(np.linalg.pinv(N.numpy()), dtype=torch.float32)  # (7, 9216)
+        self.N      = N.to(device)       # (9216, 7)
+        self.pinv_N = pinv_N.to(device)  # (7, 9216)
+        self.mode   = mode
+        seq_len    = int(data.get('seq_len',   18))
+        latent_dim = int(data.get('latent_dim', 512))
+        self.seq_len    = seq_len
+        self.latent_dim = latent_dim
+        print(f"SVMProjector: mode={mode}, N={tuple(N.shape)}, "
+              f"seq_len={seq_len}, latent_dim={latent_dim}")
+
+    @torch.no_grad()
+    def __call__(self, latents: torch.Tensor) -> torch.Tensor:
+        """
+        latents : (B, seq_len, latent_dim)
+        returns : 同形状の射影済みテンソル
+        """
+        B, S, D = latents.shape
+        w_flat     = latents.view(B, -1)                  # (B, 9216)
+        coords     = w_flat @ self.pinv_N.t()             # (B, 7)
+        w_emotion  = coords @ self.N.t()                  # (B, 9216)
+        if self.mode == 'emotion':
+            return w_emotion.view(B, S, D)
+        else:
+            return (w_flat - w_emotion).view(B, S, D)
+
+
 def set_seed(seed: int = 42) -> None:
     import random
     random.seed(seed)
@@ -104,7 +152,7 @@ def calculate_class_weights(dataset) -> torch.Tensor:
     return torch.FloatTensor(weights)
 
 
-def train_epoch(model, loader, optimizer, criterion, device, args):
+def train_epoch(model, loader, optimizer, criterion, device, args, projector=None):
     """1エポックの学習（損失、精度、F1スコアを返す）"""
     model.train()
     total_loss = 0.0
@@ -114,6 +162,10 @@ def train_epoch(model, loader, optimizer, criterion, device, args):
     for latents, labels in loader:
         latents = latents.to(device)
         labels = labels.to(device)
+
+        # SVM 射影（オンザフライ）
+        if projector is not None:
+            latents = projector(latents)
 
         # Mixup
         alpha = args.mixup
@@ -149,7 +201,7 @@ def train_epoch(model, loader, optimizer, criterion, device, args):
 
 
 @torch.no_grad()
-def evaluate(model, loader, criterion, device):
+def evaluate(model, loader, criterion, device, projector=None):
     """モデルの評価（損失、精度、F1スコアを返す）"""
     model.eval()
     total_loss = 0.0
@@ -159,6 +211,9 @@ def evaluate(model, loader, criterion, device):
     for latents, labels in loader:
         latents = latents.to(device)
         labels = labels.to(device)
+
+        if projector is not None:
+            latents = projector(latents)
 
         logits = model(latents)
         loss = criterion(logits, labels)
@@ -252,6 +307,12 @@ def main(args):
         use_leam=args.use_leam,
     ).to(device)
 
+    # SVM Projector の初期化
+    projector = None
+    if args.svm_basis is not None:
+        projector = SVMProjector(args.svm_basis, args.svm_projection, device)
+        print(f"\nSVM projection enabled: mode={args.svm_projection}")
+
     # クラス重み計算
     if args.use_class_weights:
         class_weights = calculate_class_weights(train_ds).to(device)
@@ -297,6 +358,8 @@ def main(args):
         'seed': args.seed,
         'data_fraction': args.data_fraction,
         'mixup': args.mixup,
+        'svm_basis': args.svm_basis,
+        'svm_projection': args.svm_projection if args.svm_basis is not None else None,
     }
 
     config = {
@@ -330,10 +393,10 @@ def main(args):
 
     for epoch in range(1, args.epochs + 1):
         train_loss, train_acc, train_f1 = train_epoch(
-            model, train_loader, optimizer, criterion, device, args
+            model, train_loader, optimizer, criterion, device, args, projector=projector
         )
 
-        val_results = evaluate(model, val_loader, criterion, device)
+        val_results = evaluate(model, val_loader, criterion, device, projector=projector)
         val_loss = val_results['loss']
         val_acc = val_results['accuracy']
         val_f1 = val_results['f1_macro']
@@ -376,7 +439,7 @@ def main(args):
     print(f"使用データ割合: {args.data_fraction*100:.1f}%")
     print(f"Best F1 macro: {best_f1:.4f}")
 
-    final_results = evaluate(model, val_loader, criterion, device)
+    final_results = evaluate(model, val_loader, criterion, device, projector=projector)
     emotion_names = ['Angry', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sad', 'Surprise']
     print(f"\nClassification Report:")
     print(classification_report(final_results['labels'], final_results['predictions'],
@@ -435,6 +498,12 @@ if __name__ == "__main__":
     parser.add_argument("--use_lwn_residual", action="store_true", help="LWNで残差ゲートを使用（スケール情報保持）")
     parser.add_argument("--use_spe",          action="store_true", help="SemanticPEを使用")
     parser.add_argument("--use_leam",         action="store_true", help="LEAMを使用")
+
+    # SVM 射影
+    parser.add_argument("--svm_basis", type=str, default=None,
+                        help="感情基底 N のパス (emotion_basis_N.pt)。省略時は射影なし。")
+    parser.add_argument("--svm_projection", choices=["emotion", "residual"], default="emotion",
+                        help="射影の種類: emotion=感情成分のみ, residual=非感情成分のみ（--svm_basis 指定時のみ有効）")
 
     # その他
     parser.add_argument("--seed", type=int, default=42)

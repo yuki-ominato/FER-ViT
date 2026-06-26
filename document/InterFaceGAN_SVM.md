@@ -1,3 +1,41 @@
+# 感情成分のみで訓練
+python train/train_latent_vit_v2.py \
+    --latent_train_dir latents/train \
+    --latent_val_dir   latents/val \
+    --svm_basis        latent_analysis/svm_output/emotion_basis_N.pt \
+    --svm_projection   emotion
+
+# 非感情成分（アイデンティティ等）のみで訓練
+python train/train_latent_vit_v2.py \
+    --latent_train_dir latents/train \
+    --latent_val_dir   latents/val \
+    --svm_basis        latent_analysis/svm_output/emotion_basis_N.pt \
+    --svm_projection   residual
+
+# 射影なし（従来通り）
+python train/train_latent_vit_v2.py \
+    --latent_train_dir latents/train \
+    --latent_val_dir   latents/val
+
+
+# 1. 基底を構築
+python latent_analysis/build_svm_projection.py \
+    --svm_model latent_analysis/svm_output/svm_model.joblib \
+    --output_dir latent_analysis/svm_output
+
+# 2. 全スプリットを射影
+python latent_analysis/project_latents_svm.py \
+    --basis latent_analysis/svm_output/emotion_basis_N.pt \
+    --latent_root latents \
+    --output_root latents_svm
+
+# 3. 分離品質を評価
+python latent_analysis/evaluate_svm_subspace.py \
+    --latent_root latents_svm \
+    --train_split train \
+    --eval_split test
+
+
 # SVM感情部分空間抽出 実装設計書
 
 ## 1. 研究目的
