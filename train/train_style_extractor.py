@@ -229,6 +229,8 @@ def main() -> None:
 
     # --- Models ---
     generator, face_pool = load_generator(args.psp_path, device)
+    print(f"generator type: {type(generator)}")
+    print(f"convs length:   {len(generator.convs)}")   # 16 になるはず
 
     h = StyleExtractor().to(device)
     print(f"StyleExtractor parameters: {sum(p.numel() for p in h.parameters()):,}")
