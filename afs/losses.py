@@ -195,14 +195,6 @@ class AFSLoss(nn.Module):
 
             l_feat = F.mse_loss(feat32_gen, feat32_tgt)
         else:
-            # ── DEBUG: L_feat = 0 の原因を特定したら以下3行を削除 ──
-            if not hasattr(AFSLoss, '_feat_debug_printed'):
-                AFSLoss._feat_debug_printed = True
-                print(f"[DEBUG] L_feat=0: feat_hook={feat_hook!r}, "
-                      f"gen_ref={gen_ref is not None}, "
-                      f"w_tgt={w_tgt is not None}, "
-                      f"hook.feat={feat_hook.feat if feat_hook else 'N/A'}")
-            # ─────────────────────────────────────────────────────────
             l_feat = torch.tensor(0.0, device=img_gen.device)
 
         # --- L_lpips: Perceptual loss ---

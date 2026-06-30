@@ -115,8 +115,13 @@ def run_epoch(
             w_new = (w_src - w_sty_src) + w_sty_tgt
             w_sty_new = h(w_new)
 
-            # G(w_new) を生成。この呼び出しで AFSLoss 内の feature hook が
-            # convs[5] の 32×32 特徴を捕捉する。
+            # provider.get_images() が GeneratedImageProvider の場合に generator を
+            # 呼び出してフックを上書きしないよう、参照画像は G(w_new) より先に取得する。
+            img_src = provider.get_images(w_src, list(paths_src), device)
+            img_tgt = provider.get_images(w_tgt, list(paths_tgt), device)
+
+            # G(w_new) を最後に呼び出す。この時点で feat_hook.feat に G(w_new) の
+            # 32×32 特徴が残り、criterion 内の L_feat 計算が正しく機能する。
             img_gen, _ = generator(
                 [w_new],
                 input_is_latent=True,
@@ -124,9 +129,6 @@ def run_epoch(
                 return_latents=False,
             )
             img_gen = face_pool(img_gen)
-
-            img_src = provider.get_images(w_src, list(paths_src), device)
-            img_tgt = provider.get_images(w_tgt, list(paths_tgt), device)
 
             # w_tgt を渡すことで criterion 内部で G(w_tgt) の 32×32 特徴も取得し
             # L_feat = MSE(feat32_gen, feat32_tgt) を計算する。
@@ -245,18 +247,6 @@ def main() -> None:
         lambda_feat=args.lambda_feat,
         lambda_cons=args.lambda_cons,
     ).to(device)
-    print("feat_hook :", criterion.__dict__.get('_feat_hook'))
-    print("gen_ref   :", criterion.__dict__.get('_generator_ref') is not None)
-
-    # ── DEBUG: hook 発火テスト（原因確定後に削除） ──
-    _fh = criterion.__dict__.get('_feat_hook')
-    if _fh is not None:
-        _dummy = torch.randn(1, 18, 512, device=device)
-        with torch.no_grad():
-            generator([_dummy], input_is_latent=True, randomize_noise=False, return_latents=False)
-        print(f"hook firing test — feat shape: {_fh.feat.shape if _fh.feat is not None else 'None (未発火!)'}")
-    # ────────────────────────────────────────────────
-
     # --- Image provider ---
     if args.provider == "b":
         val_img_root = args.val_img_root if args.val_img_root is not None else args.img_root
