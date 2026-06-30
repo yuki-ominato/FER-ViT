@@ -245,6 +245,8 @@ def main() -> None:
         lambda_feat=args.lambda_feat,
         lambda_cons=args.lambda_cons,
     ).to(device)
+    print("feat_hook :", criterion.__dict__.get('_feat_hook'))   # None 以外が出るはず
+    print("gen_ref   :", criterion.__dict__.get('_generator_ref'))
 
     # --- Image provider ---
     if args.provider == "b":

@@ -425,8 +425,8 @@ CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_latent_vit_afs.py \
 ```bash
 python train/train_image_cnn.py \
     --dataset fer2013 \
-    --train_dir /path/to/fer2013/train \
-    --val_dir   /path/to/fer2013/val \
+    --train_dir ../dataset/fer2013/train \
+    --val_dir   ../dataset/fer2013/val \
     --backbone resnet18
 ```
 
