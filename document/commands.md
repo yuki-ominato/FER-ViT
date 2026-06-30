@@ -82,7 +82,7 @@ python data/generate_latents.py \
 
 ---
 
-## 2. StyleExtractor の訓練
+## 2. StyleExtractor の訓練（AFS 原論文損失）
 
 `train/train_style_extractor.py` を使う。  
 事前に latent 変換済みの `.pt` ファイルが必要。
@@ -119,7 +119,71 @@ python train/train_style_extractor.py \
 ```
 
 チェックポイントは `outputs/afs/<YYYYMMDD_HHMMSS>/checkpoints/` 以下に保存される。  
-- `best_model.pt` — val loss（指定なければ train loss）が改善したエポック  
+- `best_model.pt` — val loss（指定なければ train loss）が改善したエポック
+
+---
+
+## 3. FER特化 StyleExtractor の訓練（AFSFERLoss）
+
+`train/train_fer_extractor.py` を使う。  
+AFS 原論文の損失を FER タスク向けに再設計したバリアント。
+
+| 損失 | 内容 | ジェネレータ必要 |
+|------|------|:---:|
+| `L_expr` | h(w) が感情ラベルに識別可能か | ✗ |
+| `L_neutral` | w−h(w) が無表情(4)に識別可能か | ✗ |
+| `L_id` | ArcFace でアイデンティティ保存 | ✓ |
+| `L_sparse` | 非表情 W+ 層(0-3, 12-17)をゼロに近づける | ✗ |
+| `L_cons` | h(w_new) ≈ h(w_tgt) の一貫性 | ✗ |
+
+### 基本（ジェネレータあり、L_id 有効）
+
+```bash
+python train/train_fer_extractor.py \
+  --latent_dir     latents/fer2013/train \
+  --val_latent_dir latents/fer2013/val \
+  --psp_path       pretrained_models/e4e_ffhq_encode.pt \
+  --arcface_path   pretrained_models/model_ir_se50.pth \
+  --out_dir        outputs/afs_fer \
+  --epochs         10 \
+  --batch_size     4
+```
+
+### 高速版（ジェネレータなし、L_id = 0）
+
+```bash
+python train/train_fer_extractor.py \
+  --latent_dir     latents/fer2013/train \
+  --val_latent_dir latents/fer2013/val \
+  --psp_path       pretrained_models/e4e_ffhq_encode.pt \
+  --arcface_path   pretrained_models/model_ir_se50.pth \
+  --out_dir        outputs/afs_fer \
+  --no_generator \
+  --epochs         10 \
+  --batch_size     16
+```
+
+### 損失係数の調整例
+
+```bash
+python train/train_fer_extractor.py \
+  --latent_dir     latents/fer2013/train \
+  --val_latent_dir latents/fer2013/val \
+  --psp_path       pretrained_models/e4e_ffhq_encode.pt \
+  --arcface_path   pretrained_models/model_ir_se50.pth \
+  --out_dir        outputs/afs_fer \
+  --no_generator \
+  --lambda_expr    1.0 \
+  --lambda_neutral 0.5 \
+  --lambda_sparse  0.02 \
+  --lambda_cons    0.1 \
+  --epochs         10 \
+  --batch_size     16
+```
+
+チェックポイントは `outputs/afs_fer/<YYYYMMDD_HHMMSS>/checkpoints/` 以下に保存される。  
+- `best_model.pt` の `'model_state'` に StyleExtractor h の重み
+- `best_model.pt` の `'classifier_state'` に ExprClassifier の重み（単体利用も可能）  
 - `last_model.pt` — 毎エポック上書き（学習再開用）
 
 ---
