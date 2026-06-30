@@ -487,6 +487,62 @@ python eval/evaluate_image_cnn.py \
 
 ---
 
+## 7. InterFaceGAN SVM 感情部分空間分離
+
+`latent_analysis/` 以下のスクリプトを順に実行する。  
+すべて `fer-vit/` をカレントディレクトリとして実行する。
+
+### ① SVM 学習（train のみ使用）
+
+```bash
+python latent_analysis/train_svm.py \
+    --latent_dir latents/fer2013/train \
+    --output_dir latent_analysis/svm_output_fer2013
+```
+
+### ② 感情基底 N の構築
+
+```bash
+python latent_analysis/build_svm_projection.py \
+    --svm_model  latent_analysis/svm_output_fer2013/svm_model.joblib \
+    --output_dir latent_analysis/svm_output_fer2013
+```
+
+### ③ ViT 訓練（3条件）
+
+#### Baseline（射影なし・比較用）
+
+```bash
+python train/train_latent_vit_v2.py \
+    --latent_train_dir latents/fer2013/train \
+    --latent_val_dir   latents/fer2013/val \
+    --experiment_name  svm_baseline
+```
+
+#### Emotion Only（感情成分のみ）
+
+```bash
+python train/train_latent_vit_v2.py \
+    --latent_train_dir latents/fer2013/train \
+    --latent_val_dir   latents/fer2013/val \
+    --svm_basis        latent_analysis/svm_output_fer2013/emotion_basis_N.pt \
+    --svm_projection   emotion \
+    --experiment_name  svm_emotion_only
+```
+
+#### Residual Only（非感情成分のみ）
+
+```bash
+python train/train_latent_vit_v2.py \
+    --latent_train_dir latents/fer2013/train \
+    --latent_val_dir   latents/fer2013/val \
+    --svm_basis        latent_analysis/svm_output_fer2013/emotion_basis_N.pt \
+    --svm_projection   residual \
+    --experiment_name  svm_residual_only
+```
+
+---
+
 ## 補足
 
 | 項目 | パス |
