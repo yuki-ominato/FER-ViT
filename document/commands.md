@@ -106,11 +106,11 @@ python train/train_style_extractor.py \
 
 ```bash
 python train/train_style_extractor.py \
-  --latent_dir    latents/train \
-  --val_latent_dir latents/val \
-  --psp_path      pretrained_models/psp_ffhq_encode.pt \
+  --latent_dir    latents/rafdb_e4e/train \
+  --val_latent_dir latents/rafdb_e4e/test \
+  --psp_path      pretrained_models/e4e_ffhq_encode.pt\
   --arcface_path  pretrained_models/model_ir_se50.pth \
-  --out_dir       outputs/afs \
+  --out_dir       outputs/afs/rafdb-a \
   --provider      a \
   --epochs        10 \
   --batch_size    4
@@ -235,7 +235,61 @@ CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_image_vit.py \
 
 ---
 
-## 4. LatentViT の訓練
+## 4. StyleExtractor の事前適用（オプション）
+
+`train_latent_vit_afs.py` の代わりに、変換済み `.pt` を事前に作っておく方法。  
+エポックをまたいで何度も StyleExtractor を呼ばずに済むため、訓練速度が向上する。
+
+### スタイル成分（w_sty = h(w)）を保存
+
+```bash
+python data/extract_style_latents.py \
+  --latent_dir           latents/train \
+  --out_dir              latents/train_sty \
+  --style_extractor_path outputs/afs/<run_id>/checkpoints/best_model.pt \
+  --batch_size           256
+
+python data/extract_style_latents.py \
+  --latent_dir           latents/val \
+  --out_dir              latents/val_sty \
+  --style_extractor_path outputs/afs/<run_id>/checkpoints/best_model.pt \
+  --batch_size           256
+```
+
+### アイデンティティ成分（w_id = w − h(w)）を保存
+
+```bash
+python data/extract_style_latents.py \
+  --latent_dir           latents/train \
+  --out_dir              latents/train_id \
+  --style_extractor_path outputs/afs/<run_id>/checkpoints/best_model.pt \
+  --mode                 identity \
+  --batch_size           256
+```
+
+### 両方まとめて保存（--out_dir/style/ と --out_dir/identity/ に分けて出力）
+
+```bash
+python data/extract_style_latents.py \
+  --latent_dir           latents/train \
+  --out_dir              latents/train_afs \
+  --style_extractor_path outputs/afs/<run_id>/checkpoints/best_model.pt \
+  --mode                 both \
+  --batch_size           256
+```
+
+変換後は `train_latent_vit.py` に変換済みディレクトリを渡すだけでよい:
+
+```bash
+CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_latent_vit.py \
+  --latent_train_dir latents/train_sty \
+  --latent_val_dir   latents/val_sty \
+  --epochs 60 --batch_size 64
+```
+
+---
+
+## 6. LatentViT の訓練
 
 `train/train_latent_vit.py` を使う。latent コードを入力とする ViT モデル。  
 事前に latent 変換（手順 1）が必要。
@@ -295,6 +349,75 @@ CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_latent_vit_afs.py \
   --use_class_weights \
   --label_smoothing 0.1
 ```
+
+# 実行コマンド集
+
+## train_image_cnn.py（2D Image CNN）
+
+### FER2013 × スクラッチ
+
+```bash
+python train/train_image_cnn.py \
+    --dataset fer2013 \
+    --train_dir /path/to/fer2013/train \
+    --val_dir   /path/to/fer2013/val \
+    --backbone resnet18
+```
+
+### FER2013 × ImageNet 事前学習あり
+
+```bash
+python train/train_image_cnn.py \
+    --dataset fer2013 \
+    --train_dir /path/to/fer2013/train \
+    --val_dir   /path/to/fer2013/val \
+    --backbone resnet18 \
+    --use_pretrained
+```
+
+### RAF-DB × スクラッチ
+
+```bash
+python train/train_image_cnn.py \
+    --dataset raf-db \
+    --train_dir /home/yuki/research2/dataset/RAF-DB \
+    --val_dir   /home/yuki/research2/dataset/RAF-DB \
+    --backbone resnet18
+```
+
+### RAF-DB × ImageNet 事前学習あり
+
+```bash
+python train/train_image_cnn.py \
+    --dataset raf-db \
+    --train_dir /home/yuki/research2/dataset/RAF-DB \
+    --val_dir   /home/yuki/research2/dataset/RAF-DB \
+    --backbone resnet18 \
+    --use_pretrained
+```
+
+---
+
+## evaluate_image_cnn.py（評価）
+
+```bash
+python eval/evaluate_image_cnn.py \
+    --checkpoint_path experiments/<実験名>/<タイムスタンプ>/checkpoints/best_model.pt \
+    --dataset fer2013 \
+    --test_dir /path/to/fer2013/test \
+    --output_dir eval_results/image_cnn
+```
+
+RAF-DB の場合:
+
+```bash
+python eval/evaluate_image_cnn.py \
+    --checkpoint_path experiments/<実験名>/<タイムスタンプ>/checkpoints/best_model.pt \
+    --dataset raf-db \
+    --test_dir /home/yuki/research2/dataset/RAF-DB \
+    --output_dir eval_results/image_cnn_rafdb
+```
+
 
 ---
 

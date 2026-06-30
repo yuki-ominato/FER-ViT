@@ -1,0 +1,493 @@
+"""
+2D Image CNN (ResNet) training script for FER.
+Supports FER2013 and RAF-DB, with or without ImageNet pretraining.
+
+Usage examples
+--------------
+FER2013, scratch:
+  python train/train_image_cnn.py \
+      --dataset fer2013 \
+      --train_dir /path/to/fer2013/train \
+      --val_dir   /path/to/fer2013/val \
+      --backbone resnet18
+
+FER2013, pretrained:
+  python train/train_image_cnn.py \
+      --dataset fer2013 \
+      --train_dir /path/to/fer2013/train \
+      --val_dir   /path/to/fer2013/val \
+      --backbone resnet18 --use_pretrained
+
+RAF-DB, scratch:
+  python train/train_image_cnn.py \
+      --dataset raf-db \
+      --train_dir /path/to/RAF-DB \
+      --val_dir   /path/to/RAF-DB \
+      --backbone resnet18
+
+RAF-DB, pretrained:
+  python train/train_image_cnn.py \
+      --dataset raf-db \
+      --train_dir /path/to/RAF-DB \
+      --val_dir   /path/to/RAF-DB \
+      --backbone resnet18 --use_pretrained
+"""
+
+import os
+import sys
+import argparse
+from collections import Counter
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+from torch.utils.data import DataLoader, Subset
+from sklearn.metrics import accuracy_score, f1_score, classification_report
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from data.image_dataset import create_image_dataset, get_train_transforms, get_val_transforms
+from models_fer_vit.image_cnn import ImageCNN2D
+from utils.experiment_logger import ExperimentLogger, create_experiment_name
+
+
+# ---------------------------------------------------------------------------
+# Reproducibility
+# ---------------------------------------------------------------------------
+
+def set_seed(seed: int = 42) -> None:
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    try:
+        torch.use_deterministic_algorithms(True)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Data helpers  (mirrors train_image_vit.py)
+# ---------------------------------------------------------------------------
+
+def create_subset_dataset(dataset, fraction: float, seed: int = 42):
+    """Reduce dataset while preserving class balance."""
+    if fraction >= 1.0:
+        return dataset
+
+    labels = [label for _, label in dataset.samples]
+    class_indices: dict[int, list[int]] = {}
+    for idx, label in enumerate(labels):
+        class_indices.setdefault(label, []).append(idx)
+
+    selected_indices = []
+    print(f"\nデータセット削減: {fraction*100:.1f}% を使用")
+    print("=" * 60)
+
+    label_to_class = dataset.LABEL_TO_CLASS
+    for class_id, indices in sorted(class_indices.items()):
+        n_samples = len(indices)
+        n_select = max(1, int(n_samples * fraction))
+        np.random.seed(seed)
+        selected = np.random.choice(indices, n_select, replace=False)
+        selected_indices.extend(selected)
+        emotion_name = label_to_class.get(class_id, str(class_id))
+        print(f"  {emotion_name:>8s}: {n_samples:>5d} → {n_select:>5d} ({n_select/n_samples*100:.1f}%)")
+
+    print(f"  {'Total':>8s}: {len(labels):>5d} → {len(selected_indices):>5d}")
+    print("=" * 60)
+    return Subset(dataset, selected_indices)
+
+
+def calculate_class_weights(dataset) -> torch.Tensor:
+    labels = []
+    if isinstance(dataset, Subset):
+        for idx in dataset.indices:
+            _, label = dataset.dataset.samples[idx]
+            labels.append(label)
+    else:
+        labels = [label for _, label in dataset.samples]
+
+    class_counts = Counter(labels)
+    total_samples = len(labels)
+    num_classes = len(class_counts)
+
+    weights = []
+    for i in range(num_classes):
+        weight = total_samples / (num_classes * class_counts[i]) if i in class_counts else 1.0
+        weights.append(weight)
+    return torch.FloatTensor(weights)
+
+
+# ---------------------------------------------------------------------------
+# Train / evaluate loops  (mirrors train_image_vit.py)
+# ---------------------------------------------------------------------------
+
+def train_epoch(model, loader, optimizer, criterion, device, grad_clip=None):
+    model.train()
+    total_loss = 0.0
+    all_preds, all_labels = [], []
+
+    for images, labels in loader:
+        images = images.to(device)
+        labels = labels.to(device)
+
+        optimizer.zero_grad()
+        logits = model(images)
+        loss = criterion(logits, labels)
+        loss.backward()
+
+        if grad_clip is not None:
+            nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+
+        optimizer.step()
+
+        total_loss += loss.item() * images.size(0)
+        preds = logits.argmax(dim=1)
+        all_preds.extend(preds.cpu().numpy())
+        all_labels.extend(labels.cpu().numpy())
+
+    avg_loss = total_loss / len(loader.dataset)
+    accuracy = accuracy_score(all_labels, all_preds)
+    f1 = f1_score(all_labels, all_preds, average='macro')
+    return avg_loss, accuracy, f1
+
+
+@torch.no_grad()
+def evaluate(model, loader, criterion, device):
+    model.eval()
+    total_loss = 0.0
+    all_preds, all_labels = [], []
+
+    for images, labels in loader:
+        images = images.to(device)
+        labels = labels.to(device)
+
+        logits = model(images)
+        loss = criterion(logits, labels)
+        preds = logits.argmax(dim=1)
+
+        total_loss += loss.item() * images.size(0)
+        all_preds.extend(preds.cpu().numpy())
+        all_labels.extend(labels.cpu().numpy())
+
+    avg_loss = total_loss / len(loader.dataset)
+    accuracy = accuracy_score(all_labels, all_preds)
+    f1_macro = f1_score(all_labels, all_preds, average='macro')
+    f1_weighted = f1_score(all_labels, all_preds, average='weighted')
+
+    return {
+        'loss': avg_loss,
+        'accuracy': accuracy,
+        'f1_macro': f1_macro,
+        'f1_weighted': f1_weighted,
+        'predictions': all_preds,
+        'labels': all_labels,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main(args):
+    set_seed(args.seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+    # ------------------------------------------------------------------
+    # Datasets
+    # ------------------------------------------------------------------
+    print("\n" + "=" * 60)
+    print("Loading datasets...")
+    print("=" * 60)
+
+    train_transform = get_train_transforms(args.img_size) if args.use_augmentation else get_val_transforms(args.img_size)
+    val_transform = get_val_transforms(args.img_size)
+
+    train_ds_full = create_image_dataset(
+        args.dataset,
+        args.train_dir,
+        split='train',
+        transform=train_transform,
+        img_size=args.img_size,
+    )
+
+    if args.data_fraction < 1.0:
+        train_ds = create_subset_dataset(train_ds_full, args.data_fraction, args.seed)
+    else:
+        train_ds = train_ds_full
+
+    val_ds = create_image_dataset(
+        args.dataset,
+        args.val_dir,
+        split='test',
+        transform=val_transform,
+        img_size=args.img_size,
+    )
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+    )
+
+    # ------------------------------------------------------------------
+    # Model
+    # ------------------------------------------------------------------
+    print("\n" + "=" * 60)
+    print("Creating model...")
+    print("=" * 60)
+
+    model = ImageCNN2D(
+        backbone=args.backbone,
+        pretrained=args.use_pretrained,
+        num_classes=args.num_classes,
+        dropout=args.dropout,
+    ).to(device)
+
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Backbone      : {args.backbone}")
+    print(f"Pretrained    : {args.use_pretrained}")
+    print(f"Trainable params: {n_params:,}")
+
+    # ------------------------------------------------------------------
+    # Loss / optimizer / scheduler
+    # ------------------------------------------------------------------
+    if args.use_class_weights:
+        class_weights = calculate_class_weights(train_ds).to(device)
+        print(f"Class weights: {class_weights}")
+        criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=args.label_smoothing)
+    else:
+        criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
+
+    if args.optimizer == 'adamw':
+        optimizer = optim.AdamW(
+            model.parameters(),
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            betas=(0.9, 0.999),
+        )
+    elif args.optimizer == 'sgd':
+        optimizer = optim.SGD(
+            model.parameters(),
+            lr=args.lr,
+            momentum=0.9,
+            weight_decay=args.weight_decay,
+        )
+    else:
+        raise ValueError(f"Unsupported optimizer: {args.optimizer}")
+
+    if args.scheduler == 'cosine':
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=args.epochs, eta_min=args.lr * 0.01
+        )
+    elif args.scheduler == 'plateau':
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='max', patience=5, factor=0.5, verbose=True
+        )
+    elif args.scheduler == 'warmup_cosine':
+        warmup_epochs = min(10, args.epochs // 10)
+
+        def lr_lambda(epoch):
+            if epoch < warmup_epochs:
+                return (epoch + 1) / warmup_epochs
+            progress = (epoch - warmup_epochs) / (args.epochs - warmup_epochs)
+            return 0.5 * (1 + np.cos(np.pi * progress))
+
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    else:
+        scheduler = None
+
+    # ------------------------------------------------------------------
+    # Experiment logger
+    # ------------------------------------------------------------------
+    model_config = {
+        'backbone': args.backbone,
+        'use_pretrained': args.use_pretrained,
+        'num_classes': args.num_classes,
+        'dropout': args.dropout,
+        'n_parameters': n_params,
+    }
+    training_config = {
+        'epochs': args.epochs,
+        'batch_size': args.batch_size,
+        'lr': args.lr,
+        'weight_decay': args.weight_decay,
+        'optimizer': args.optimizer,
+        'scheduler': args.scheduler,
+        'use_augmentation': args.use_augmentation,
+        'use_class_weights': args.use_class_weights,
+        'label_smoothing': args.label_smoothing,
+        'grad_clip': args.grad_clip,
+        'seed': args.seed,
+        'data_fraction': args.data_fraction,
+    }
+    data_config = {
+        'dataset': args.dataset,
+        'train_dir': args.train_dir,
+        'val_dir': args.val_dir,
+        'train_samples': len(train_ds),
+        'val_samples': len(val_ds),
+    }
+    config = {'model': model_config, 'training': training_config, 'data': data_config}
+
+    cnn_label = f"image_cnn_{args.backbone}"
+    base_name = create_experiment_name(
+        model_config, training_config,
+        is_latent=False, is_pretrained=args.use_pretrained,
+        model_type=cnn_label,
+    )
+    experiment_name = f"{base_name}_frac{int(args.data_fraction * 100)}"
+    logger = ExperimentLogger(experiment_name, base_dir="experiments")
+    logger.log_config(config)
+
+    # ------------------------------------------------------------------
+    # Training loop
+    # ------------------------------------------------------------------
+    print("\n" + "=" * 60)
+    print("Starting training...")
+    print("=" * 60)
+
+    best_f1 = 0.0
+
+    for epoch in range(1, args.epochs + 1):
+        train_loss, train_acc, train_f1 = train_epoch(
+            model, train_loader, optimizer, criterion, device,
+            grad_clip=args.grad_clip,
+        )
+        val_results = evaluate(model, val_loader, criterion, device)
+        val_loss = val_results['loss']
+        val_acc = val_results['accuracy']
+        val_f1 = val_results['f1_macro']
+
+        print(
+            f"Epoch {epoch}/{args.epochs}: "
+            f"train_loss={train_loss:.4f} train_acc={train_acc:.4f} train_f1={train_f1:.4f} "
+            f"val_loss={val_loss:.4f} val_acc={val_acc:.4f} val_f1={val_f1:.4f}"
+        )
+
+        metrics = {
+            'train_loss': train_loss,
+            'train_acc': train_acc,
+            'train_f1': train_f1,
+            'val_loss': val_loss,
+            'val_acc': val_acc,
+            'val_f1': val_f1,
+        }
+        logger.log_metrics(metrics, epoch)
+        logger.log_learning_rate(optimizer, epoch)
+
+        if epoch % 10 == 0:
+            logger.log_parameters(model, epoch)
+            logger.log_gradients(model, epoch)
+
+        is_best = val_f1 > best_f1
+        if is_best:
+            best_f1 = val_f1
+            print(f"  → New best model (F1: {best_f1:.4f})")
+
+        logger.save_checkpoint(model, optimizer, epoch, val_results, is_best)
+
+        if scheduler is not None:
+            if args.scheduler == 'plateau':
+                scheduler.step(val_f1)
+            else:
+                scheduler.step()
+
+    # ------------------------------------------------------------------
+    # Final evaluation
+    # ------------------------------------------------------------------
+    print("\n" + "=" * 60)
+    print("Training completed!")
+    print("=" * 60)
+    print(f"Best val F1 macro: {best_f1:.4f}")
+
+    final_results = evaluate(model, val_loader, criterion, device)
+    print(f"\nFinal validation results:")
+    print(f"  Accuracy  : {final_results['accuracy']:.4f}")
+    print(f"  F1 Macro  : {final_results['f1_macro']:.4f}")
+    print(f"  F1 Weighted: {final_results['f1_weighted']:.4f}")
+
+    emotion_names = ['Angry', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sad', 'Surprise']
+    print("\nClassification Report:")
+    print(classification_report(
+        final_results['labels'],
+        final_results['predictions'],
+        target_names=emotion_names,
+    ))
+
+    logger.log_confusion_matrix(
+        final_results['labels'],
+        final_results['predictions'],
+        emotion_names,
+        args.epochs,
+    )
+
+    final_metrics = {
+        'accuracy': final_results['accuracy'],
+        'f1_macro': final_results['f1_macro'],
+        'f1_weighted': final_results['f1_weighted'],
+        'best_f1_macro': best_f1,
+    }
+    logger.log_experiment_summary(final_metrics)
+    logger.close()
+
+    print(f"\nExperiment saved to: {logger.get_experiment_path()}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Train 2D Image CNN (ResNet) for FER")
+
+    # Data
+    parser.add_argument("--dataset", choices=['fer2013', 'raf-db'], required=True,
+                        help="Dataset: 'fer2013' (class-subdir) or 'raf-db' (CSV + numbered-subdir)")
+    parser.add_argument("--train_dir", required=True,
+                        help="Training dir. FER2013: class subdirs root; RAF-DB: dataset root (same as val_dir)")
+    parser.add_argument("--val_dir", required=True,
+                        help="Validation dir. FER2013: class subdirs root; RAF-DB: dataset root (test split)")
+    parser.add_argument("--img_size", type=int, default=224)
+    parser.add_argument("--use_augmentation", action='store_true')
+
+    # Model
+    parser.add_argument("--backbone", choices=['resnet18', 'resnet34', 'resnet50'],
+                        default='resnet18')
+    parser.add_argument("--use_pretrained", action='store_true',
+                        help="Load ImageNet pretrained weights")
+    parser.add_argument("--num_classes", type=int, default=7)
+    parser.add_argument("--dropout", type=float, default=0.0)
+
+    # Training
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--weight_decay", type=float, default=0.05)
+    parser.add_argument("--optimizer", choices=['adamw', 'sgd'], default='adamw')
+    parser.add_argument("--scheduler", choices=['none', 'cosine', 'plateau', 'warmup_cosine'],
+                        default='warmup_cosine')
+    parser.add_argument("--grad_clip", type=float, default=None)
+    parser.add_argument("--label_smoothing", type=float, default=0.1)
+    parser.add_argument("--use_class_weights", action='store_true')
+
+    # Misc
+    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--data_fraction", type=float, default=1.0)
+
+    args = parser.parse_args()
+    main(args)
