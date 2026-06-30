@@ -9,8 +9,8 @@ SVM 学習には train スプリットのみを使用する。
 
 使い方:
     python latent_analysis/train_svm.py \
-        --latent_dir latents/train \
-        --output_dir latent_analysis/svm_output
+        --latent_dir latents/fer2013/train \
+        --output_dir latent_analysis/svm_output_fer2013
 """
 
 import os
