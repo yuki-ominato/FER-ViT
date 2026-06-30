@@ -245,8 +245,17 @@ def main() -> None:
         lambda_feat=args.lambda_feat,
         lambda_cons=args.lambda_cons,
     ).to(device)
-    print("feat_hook :", criterion.__dict__.get('_feat_hook'))   # None 以外が出るはず
-    print("gen_ref   :", criterion.__dict__.get('_generator_ref'))
+    print("feat_hook :", criterion.__dict__.get('_feat_hook'))
+    print("gen_ref   :", criterion.__dict__.get('_generator_ref') is not None)
+
+    # ── DEBUG: hook 発火テスト（原因確定後に削除） ──
+    _fh = criterion.__dict__.get('_feat_hook')
+    if _fh is not None:
+        _dummy = torch.randn(1, 18, 512, device=device)
+        with torch.no_grad():
+            generator([_dummy], input_is_latent=True, randomize_noise=False, return_latents=False)
+        print(f"hook firing test — feat shape: {_fh.feat.shape if _fh.feat is not None else 'None (未発火!)'}")
+    # ────────────────────────────────────────────────
 
     # --- Image provider ---
     if args.provider == "b":
