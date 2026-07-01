@@ -310,9 +310,9 @@ CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_image_vit.py \
 
 ```bash
 python data/extract_style_latents.py \
-  --latent_dir           latents/train \
-  --out_dir              latents/train_sty \
-  --style_extractor_path outputs/afs/<run_id>/checkpoints/best_model.pt \
+  --latent_dir           latents/fer2013_e4e/train \
+  --out_dir              latents/fer2013_e4e/train_sty_fer \
+  --style_extractor_path outputs/afs_fer/20260701_155645/checkpoints/best_model.pt \
   --batch_size           256
 
 python data/extract_style_latents.py \
@@ -337,9 +337,9 @@ python data/extract_style_latents.py \
 
 ```bash
 python data/extract_style_latents.py \
-  --latent_dir           latents/train \
-  --out_dir              latents/train_afs \
-  --style_extractor_path outputs/afs/<run_id>/checkpoints/best_model.pt \
+  --latent_dir           latents/fer2013/train \
+  --out_dir              latents/fer2013/train_afs \
+  --style_extractor_path experiments/extractor/fer2013/e4e/20260701_000937/checkpoints/best_model.pt \
   --mode                 both \
   --batch_size           256
 ```
@@ -348,8 +348,8 @@ python data/extract_style_latents.py \
 
 ```bash
 CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_latent_vit.py \
-  --latent_train_dir latents/train_sty \
-  --latent_val_dir   latents/val_sty \
+  --latent_train_dir latents/fer2013_e4e/train_sty \
+  --latent_val_dir   latents/fer2013_e4e/val_sty \
   --epochs 60 --batch_size 64
 ```
 
@@ -371,7 +371,6 @@ CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_latent_vit.py \
   --lr 1e-4 \
   --scheduler plateau \
   --use_class_weights \
-  --label_smoothing 0.1
 ```
 
 ### カスタムアーキテクチャ

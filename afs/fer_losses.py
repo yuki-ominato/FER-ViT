@@ -40,6 +40,7 @@ if _PSP_ROOT not in sys.path:
     sys.path.insert(0, _PSP_ROOT)
 
 from models.encoders.model_irse import Backbone   # ArcFace backbone
+from afs.losses import _FeatureHook               # StyleGAN2 中間特徴フック
 
 
 # ---------------------------------------------------------------------------
@@ -151,9 +152,10 @@ class AFSFERLoss(nn.Module):
         lambda_neutral: float = 0.5,
         lambda_sparse: float  = 0.02,
         lambda_cons: float    = 0.1,
+        lambda_feat: float    = 3.5,
     ) -> None:
         super().__init__()
-        self.arcface  = ArcFaceExtractor(arcface_path)
+        self.arcface    = ArcFaceExtractor(arcface_path)
         self.classifier = ExprClassifier(latent_dim, num_classes=num_classes)
 
         self.lambda_expr    = lambda_expr
@@ -161,16 +163,21 @@ class AFSFERLoss(nn.Module):
         self.lambda_neutral = lambda_neutral
         self.lambda_sparse  = lambda_sparse
         self.lambda_cons    = lambda_cons
+        self.lambda_feat    = lambda_feat
 
         self.ce = nn.CrossEntropyLoss()
 
-        # generator はサブモジュール登録せずに保持（criterion.to(device) の汚染防止）
+        # generator と feature hook を __dict__ に直接格納し、
+        # nn.Module のサブモジュール登録をバイパスする（criterion.to(device) の汚染防止）
         if generator is not None:
             object.__setattr__(self, '_generator_ref', generator)
-            print("AFSFERLoss: generator registered for L_id")
+            object.__setattr__(self, '_feat_hook', _FeatureHook(generator.convs[5]))
+            print(f"AFSFERLoss: generator registered for L_id and L_feat "
+                  f"(lambda_feat={lambda_feat})")
         else:
             object.__setattr__(self, '_generator_ref', None)
-            print("AFSFERLoss: generator not provided — L_id = 0")
+            object.__setattr__(self, '_feat_hook',     None)
+            print("AFSFERLoss: generator not provided — L_id = L_feat = 0")
 
     # ------------------------------------------------------------------
     # individual loss components
@@ -236,6 +243,35 @@ class AFSFERLoss(nn.Module):
         """L_cons = L1(h(w_new), stop_grad(h(w_tgt)))"""
         return F.l1_loss(h_new, h_tgt.detach())
 
+    def _l_feat(
+        self,
+        w_tgt: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        L_feat = MSE(feat32(G(w_new)), feat32(G(w_tgt)))
+
+        feat32_gen は訓練ループ側で G(w_new) を呼んだ際にフックが捕捉済み。
+        feat32_tgt はここで G(w_tgt) を no_grad 実行して取得する。
+        generator が未設定の場合は 0 を返す。
+        """
+        feat_hook: Optional[_FeatureHook] = self.__dict__.get('_feat_hook')
+        gen_ref = self.__dict__.get('_generator_ref')
+        if feat_hook is None or gen_ref is None or feat_hook.feat is None:
+            return torch.tensor(0.0, device=next(self.parameters()).device)
+
+        feat32_gen = feat_hook.feat  # G(w_new) の特徴（勾配あり）
+
+        with torch.no_grad():
+            gen_ref(
+                [w_tgt],
+                input_is_latent=True,
+                randomize_noise=False,
+                return_latents=False,
+            )
+            feat32_tgt = feat_hook.feat.detach()  # フックが rebind → 新テンソル
+
+        return F.mse_loss(feat32_gen, feat32_tgt)
+
     # ------------------------------------------------------------------
     # forward
     # ------------------------------------------------------------------
@@ -257,12 +293,14 @@ class AFSFERLoss(nn.Module):
         l_id      = self._l_id(img_gen, img_src)
         l_sparse  = self._l_sparse(h_src, h_tgt)
         l_cons    = self._l_cons(h_new, h_tgt)
+        l_feat    = self._l_feat(w_tgt)
 
         l_total = (self.lambda_expr    * l_expr
                    + self.lambda_id      * l_id
                    + self.lambda_neutral * l_neutral
                    + self.lambda_sparse  * l_sparse
-                   + self.lambda_cons    * l_cons)
+                   + self.lambda_cons    * l_cons
+                   + self.lambda_feat    * l_feat)
 
         metrics = {
             "expr":    l_expr.item(),
@@ -270,5 +308,6 @@ class AFSFERLoss(nn.Module):
             "neutral": l_neutral.item(),
             "sparse":  l_sparse.item(),
             "cons":    l_cons.item(),
+            "feat":    l_feat.item(),
         }
         return l_total, metrics

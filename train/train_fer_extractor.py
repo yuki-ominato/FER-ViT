@@ -111,9 +111,13 @@ def run_epoch(
     is_train = optimizer is not None
     h.train() if is_train else h.eval()
     criterion.train() if is_train else criterion.eval()
+    # ArcFace は凍結済みのため常に eval モードを維持する。
+    # criterion.train() が再帰的に BatchNorm を訓練モードに切り替えるのを戻す。
+    if hasattr(criterion, 'arcface'):
+        criterion.arcface.eval()
 
     totals = {"loss": 0.0, "expr": 0.0, "id": 0.0,
-              "neutral": 0.0, "sparse": 0.0, "cons": 0.0}
+              "neutral": 0.0, "sparse": 0.0, "cons": 0.0, "feat": 0.0}
     n_batches = 0
 
     ctx = torch.enable_grad() if is_train else torch.no_grad()
@@ -130,20 +134,13 @@ def run_epoch(
             w_new = (w_src - h_src) + h_tgt              # 表情転送後の潜在コード
             h_new = h(w_new)                              # 一貫性損失用
 
-            # ---- L_id 用画像生成（generator が利用可能な場合のみ）----
+            # ---- L_id / L_feat 用画像生成（generator が利用可能な場合のみ）----
+            # 呼び出し順が重要: G(w_src) を先に呼び、G(w_new) を最後に呼ぶ。
+            # feat_hook は最後に発火した generator 呼び出しの特徴を保持するため、
+            # G(w_new) を最後にしないと criterion 内の L_feat が G(w_new) の特徴を
+            # 読めなくなる（G(w_src) の特徴で上書きされてしまう）。
             img_gen = img_src_gen = None
             if generator is not None:
-                with torch.no_grad() if not is_train else torch.enable_grad():
-                    # 勾配は w_new を経由して h に流れるため、img_gen は勾配あり
-                    pass
-                img_gen_raw, _ = generator(
-                    [w_new],
-                    input_is_latent=True,
-                    randomize_noise=False,
-                    return_latents=False,
-                )
-                img_gen = face_pool(img_gen_raw)          # (B, 3, 256, 256)
-
                 with torch.no_grad():
                     img_src_raw, _ = generator(
                         [w_src],
@@ -152,6 +149,15 @@ def run_epoch(
                         return_latents=False,
                     )
                     img_src_gen = face_pool(img_src_raw)  # 固定参照; 勾配不要
+
+                # G(w_new) を最後に呼ぶ → feat_hook.feat = G(w_new) の 32×32 特徴
+                img_gen_raw, _ = generator(
+                    [w_new],
+                    input_is_latent=True,
+                    randomize_noise=False,
+                    return_latents=False,
+                )
+                img_gen = face_pool(img_gen_raw)          # (B, 3, 256, 256)
 
             # ---- 損失計算 ----
             loss, metrics = criterion(
@@ -213,6 +219,8 @@ def parse_args() -> argparse.Namespace:
                    help="L_expr の係数（表情識別可能性）")
     p.add_argument("--lambda_id",       type=float, default=1.0,
                    help="L_id の係数（アイデンティティ保存; generator が必要）")
+    p.add_argument("--lambda_feat",     type=float, default=3.5,
+                   help="L_feat の係数（StyleGAN2 32×32 中間特徴損失; 論文: 3.5）")
     p.add_argument("--lambda_neutral",  type=float, default=0.5,
                    help="L_neutral の係数（残差コードの無表情化）")
     p.add_argument("--lambda_sparse",   type=float, default=0.02,
@@ -254,6 +262,7 @@ def main() -> None:
         generator     = generator,
         lambda_expr   = args.lambda_expr,
         lambda_id     = args.lambda_id,
+        lambda_feat   = args.lambda_feat,
         lambda_neutral= args.lambda_neutral,
         lambda_sparse = args.lambda_sparse,
         lambda_cons   = args.lambda_cons,
@@ -296,8 +305,8 @@ def main() -> None:
     monitor_key = "val_loss" if val_loader is not None else "train_loss"
     print(f"Best model criterion: {monitor_key}")
     print(f"Loss weights: expr={args.lambda_expr} id={args.lambda_id} "
-          f"neutral={args.lambda_neutral} sparse={args.lambda_sparse} "
-          f"cons={args.lambda_cons}")
+          f"feat={args.lambda_feat} neutral={args.lambda_neutral} "
+          f"sparse={args.lambda_sparse} cons={args.lambda_cons}")
 
     log = []
     best_loss = float("inf")
@@ -316,6 +325,7 @@ def main() -> None:
             f"train_loss={train_m['loss']:.4f}  "
             f"expr={train_m['expr']:.4f}  "
             f"id={train_m['id']:.4f}  "
+            f"feat={train_m['feat']:.4f}  "
             f"neutral={train_m['neutral']:.4f}  "
             f"sparse={train_m['sparse']:.4f}  "
             f"cons={train_m['cons']:.4f}",
