@@ -2,15 +2,36 @@
 FER特化StyleExtractor用損失関数。
 
 損失構成:
-    L_expr   = CE( FC(h(w)),        label      )  表情コードの識別可能性
-    L_neutral= CE( FC(w − h(w)),    neutral=4  )  残差コードの無表情化
-    L_id     = 1 − cos( Arc(G(w_new)), Arc(G(w_src)) )  アイデンティティ保存
-    L_sparse = mean|h(w)[:, non_expr_layers, :]|  非表情層のスパース性
-    L_cons   = L1( h(w_new), stop_grad(h(w_tgt)) )  一貫性
-    L_total  = λ_e*L_expr + λ_id*L_id + λ_n*L_neutral + λ_s*L_sparse + λ_c*L_cons
+    L_expr       = CE( FC(h(w)),        label      )  表情コードの識別可能性（潜在空間、補助）
+    L_neutral    = CE( FC(w − h(w)),    neutral=4  )  残差コードの無表情化（潜在空間、補助）
+    L_expr_img   = CE( R_FER(G(w_new)),       label_tgt )  画像ドメインでの表情転写評価
+    L_neutral_img= CE( R_FER(G(w_src−h_src)), neutral=4 )  画像ドメインでの残差無表情化評価
+    L_id         = 1 − cos( Arc(G(w_new)), Arc(G(w_src)) )  アイデンティティ保存
+    L_sparse     = mean|h(w)[:, non_expr_layers, :]|  非表情層のスパース性
+    L_cons       = L1( h(w_new), stop_grad(h(w_tgt)) )  一貫性
+    L_total = λ_e*L_expr + λ_id*L_id + λ_n*L_neutral + λ_s*L_sparse + λ_c*L_cons
+              + λ_ei*L_expr_img + λ_ni*L_neutral_img
+
+背景（document/AFS_FER_diagnosis.md 参照）:
+    当初の設計 (document/AFS_FER.md) は
+        L_expr = 1 - cos(R_FER(G(w_expr + w_rest^target)), R_FER(x_expr_source))
+    のように「生成画像を FER モデルに通して評価する」ことを想定していたが、
+    L_expr/L_neutral は Generator を経由せず h(w) という生の潜在ベクトルに
+    正則化なしの小さな MLP (ExprClassifier) を直接適用するだけになっていた。
+    これは潜在空間上では表情ラベルを判別できる（train accuracy 60%台）のに、
+    デコードした画像には表情の違いがほぼ現れない、という矛盾を生んでいた
+    （ExprClassifier が大きな重みで極小の潜在方向を増幅する "近道" を学習できるため）。
+
+    L_expr_img / L_neutral_img は、実際に G() でデコードした画像を
+    画像ベースの FER モデル (train/train_image_vit.py で学習済みの ImageViT 等、
+    afs/fer_image_classifier.py::FERImageClassifier) に通して評価することで、
+    「視覚的に知覚できる表情変化」を直接強制する。ExprClassifier ベースの
+    L_expr/L_neutral は計算コストの低い補助信号として残しているが、
+    表情分離を実際に保証するのは L_expr_img/L_neutral_img 側である。
 
 ExprClassifier は AFSFERLoss 内に保持され、StyleExtractor h と共同学習される。
 → optimizer には h.parameters() と criterion.classifier.parameters() を両方渡す。
+FERImageClassifier (画像ベース FER モデル) は完全に凍結され、学習対象に含めない。
 
 W+ 層と解像度の対応 (1024px StyleGAN2 / 18層):
     0-1  : 4×4   (coarse pose / overall shape)
@@ -41,6 +62,7 @@ if _PSP_ROOT not in sys.path:
 
 from models.encoders.model_irse import Backbone   # ArcFace backbone
 from afs.losses import _FeatureHook               # StyleGAN2 中間特徴フック
+from afs.fer_image_classifier import FERImageClassifier  # 画像ベース FER モデル
 
 
 # ---------------------------------------------------------------------------
@@ -110,13 +132,18 @@ class AFSFERLoss(nn.Module):
     ----
     arcface_path  : model_ir_se50.pth へのパス（L_id 用）。
     generator     : 凍結済み StyleGAN2 Generator。None の場合 L_id = 0。
+    fer_image_ckpt: train_image_vit.py で学習した画像ベース FER モデルの
+                    best_model.pt へのパス（L_expr_img/L_neutral_img 用）。
+                    None の場合はこれらの損失を 0 として無効化する（後方互換）。
     latent_dim    : W+ 潜在コードの次元数（デフォルト 512）。
     num_classes   : 感情クラス数（デフォルト 7）。
-    lambda_expr   : L_expr の係数（デフォルト 1.0）。
+    lambda_expr   : L_expr の係数（デフォルト 1.0、潜在空間・補助）。
     lambda_id     : L_id   の係数（デフォルト 1.0）。
-    lambda_neutral: L_neutral の係数（デフォルト 0.5）。
+    lambda_neutral: L_neutral の係数（デフォルト 0.5、潜在空間・補助）。
     lambda_sparse : L_sparse の係数（デフォルト 0.02）。
     lambda_cons   : L_cons  の係数（デフォルト 0.1）。
+    lambda_expr_img   : L_expr_img の係数（デフォルト 1.0、画像ドメイン・本命）。
+    lambda_neutral_img: L_neutral_img の係数（デフォルト 0.5、画像ドメイン・本命）。
 
     Forward 引数
     ------------
@@ -127,13 +154,14 @@ class AFSFERLoss(nn.Module):
     w_tgt    [B,18,512]  元の潜在コード（人物 B / ターゲット表情）
     label_src [B,]  long  w_src の感情ラベル
     label_tgt [B,]  long  w_tgt の感情ラベル
-    img_gen  [B,3,256,256]  G(w_new)  （generator が None の場合は使用しない）
-    img_src  [B,3,256,256]  G(w_src)  （同上）
+    img_gen    [B,3,256,256]  G(w_new)             （generator が None の場合は使用しない）
+    img_src    [B,3,256,256]  G(w_src)             （同上）
+    img_id_src [B,3,256,256]  G(w_src − h_src)      （L_neutral_img 用。None なら 0）
 
     Returns
     -------
     l_total  : スカラー損失
-    metrics  : dict {"expr", "id", "neutral", "sparse", "cons"}
+    metrics  : dict {"expr", "id", "neutral", "sparse", "cons", "expr_img", "neutral_img"}
     """
 
     # 表情が集中する W+ 層インデックス（16×16 〜 128×128 に対応）
@@ -145,6 +173,7 @@ class AFSFERLoss(nn.Module):
         self,
         arcface_path: str,
         generator: Optional[nn.Module] = None,
+        fer_image_ckpt: Optional[str] = None,
         latent_dim: int = 512,
         num_classes: int = 7,
         lambda_expr: float    = 1.0,
@@ -153,6 +182,8 @@ class AFSFERLoss(nn.Module):
         lambda_sparse: float  = 0.02,
         lambda_cons: float    = 0.1,
         lambda_feat: float    = 3.5,
+        lambda_expr_img: float    = 1.0,
+        lambda_neutral_img: float = 0.5,
     ) -> None:
         super().__init__()
         self.arcface    = ArcFaceExtractor(arcface_path)
@@ -164,6 +195,8 @@ class AFSFERLoss(nn.Module):
         self.lambda_sparse  = lambda_sparse
         self.lambda_cons    = lambda_cons
         self.lambda_feat    = lambda_feat
+        self.lambda_expr_img    = lambda_expr_img
+        self.lambda_neutral_img = lambda_neutral_img
 
         self.ce = nn.CrossEntropyLoss()
 
@@ -178,6 +211,20 @@ class AFSFERLoss(nn.Module):
             object.__setattr__(self, '_generator_ref', None)
             object.__setattr__(self, '_feat_hook',     None)
             print("AFSFERLoss: generator not provided — L_id = L_feat = 0")
+
+        # 画像ベース FER モデル。arcface と同様にパスから内部で新規生成するため、
+        # 通常の submodule として登録する（criterion.to(device) で追従させる）。
+        # generator/feat_hook は「外部で管理され既に device 上にある共有インスタンス」
+        # の二重登録を避けるためにバイパスしているが、こちらは自前で生成するため不要。
+        if fer_image_ckpt is not None:
+            self.fer_image = FERImageClassifier(fer_image_ckpt)
+            print(f"AFSFERLoss: image-based FER model registered for "
+                  f"L_expr_img/L_neutral_img (lambda_expr_img={lambda_expr_img}, "
+                  f"lambda_neutral_img={lambda_neutral_img})")
+        else:
+            self.fer_image = None
+            print("AFSFERLoss: fer_image_ckpt not provided — "
+                  "L_expr_img = L_neutral_img = 0 (設計乖離の修正が無効化された状態)")
 
     # ------------------------------------------------------------------
     # individual loss components
@@ -272,6 +319,44 @@ class AFSFERLoss(nn.Module):
 
         return F.mse_loss(feat32_gen, feat32_tgt)
 
+    def _l_expr_img(
+        self,
+        img_gen: Optional[torch.Tensor],
+        label_tgt: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        L_expr_img = CE( R_FER(G(w_new)), label_tgt )
+
+        w_new = (w_src − h_src) + h_tgt にターゲットの表情コードを移植した結果が、
+        画像ベース FER モデルから見てもターゲットの表情ラベルとして認識されるかを問う。
+        L_id が「G(w_new) がソースの identity か」を ArcFace で確認するのと対称的に、
+        こちらは「G(w_new) がターゲットの表情か」を画像ドメインで確認する。
+        fer_image が未設定、または img_gen が渡されない場合は 0。
+        """
+        if self.fer_image is None or img_gen is None:
+            return torch.tensor(0.0, device=next(self.parameters()).device)
+        logits = self.fer_image(img_gen)
+        return self.ce(logits, label_tgt)
+
+    def _l_neutral_img(
+        self,
+        img_id_src: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """
+        L_neutral_img = CE( R_FER(G(w_src − h_src)), neutral=4 )
+
+        表情成分を差し引いた残差（identity 側）を実際にデコードした画像が、
+        画像ベース FER モデルから見て無表情に見えるかを問う。
+        fer_image が未設定、または img_id_src が渡されない場合は 0。
+        """
+        if self.fer_image is None or img_id_src is None:
+            return torch.tensor(0.0, device=next(self.parameters()).device)
+        B = img_id_src.size(0)
+        neutral = torch.full((B,), self.NEUTRAL_LABEL, dtype=torch.long,
+                              device=img_id_src.device)
+        logits = self.fer_image(img_id_src)
+        return self.ce(logits, neutral)
+
     # ------------------------------------------------------------------
     # forward
     # ------------------------------------------------------------------
@@ -285,29 +370,36 @@ class AFSFERLoss(nn.Module):
         w_tgt:     torch.Tensor,
         label_src: torch.Tensor,
         label_tgt: torch.Tensor,
-        img_gen:   Optional[torch.Tensor] = None,
-        img_src:   Optional[torch.Tensor] = None,
+        img_gen:    Optional[torch.Tensor] = None,
+        img_src:    Optional[torch.Tensor] = None,
+        img_id_src: Optional[torch.Tensor] = None,
     ):
-        l_expr    = self._l_expr(h_src, h_tgt, label_src, label_tgt)
-        l_neutral = self._l_neutral(h_src, h_tgt, w_src, w_tgt)
-        l_id      = self._l_id(img_gen, img_src)
-        l_sparse  = self._l_sparse(h_src, h_tgt)
-        l_cons    = self._l_cons(h_new, h_tgt)
-        l_feat    = self._l_feat(w_tgt)
+        l_expr        = self._l_expr(h_src, h_tgt, label_src, label_tgt)
+        l_neutral     = self._l_neutral(h_src, h_tgt, w_src, w_tgt)
+        l_id          = self._l_id(img_gen, img_src)
+        l_sparse      = self._l_sparse(h_src, h_tgt)
+        l_cons        = self._l_cons(h_new, h_tgt)
+        l_feat        = self._l_feat(w_tgt)
+        l_expr_img    = self._l_expr_img(img_gen, label_tgt)
+        l_neutral_img = self._l_neutral_img(img_id_src)
 
-        l_total = (self.lambda_expr    * l_expr
-                   + self.lambda_id      * l_id
-                   + self.lambda_neutral * l_neutral
-                   + self.lambda_sparse  * l_sparse
-                   + self.lambda_cons    * l_cons
-                   + self.lambda_feat    * l_feat)
+        l_total = (self.lambda_expr        * l_expr
+                   + self.lambda_id          * l_id
+                   + self.lambda_neutral     * l_neutral
+                   + self.lambda_sparse      * l_sparse
+                   + self.lambda_cons        * l_cons
+                   + self.lambda_feat        * l_feat
+                   + self.lambda_expr_img    * l_expr_img
+                   + self.lambda_neutral_img * l_neutral_img)
 
         metrics = {
-            "expr":    l_expr.item(),
-            "id":      l_id.item(),
-            "neutral": l_neutral.item(),
-            "sparse":  l_sparse.item(),
-            "cons":    l_cons.item(),
-            "feat":    l_feat.item(),
+            "expr":        l_expr.item(),
+            "id":          l_id.item(),
+            "neutral":     l_neutral.item(),
+            "sparse":      l_sparse.item(),
+            "cons":        l_cons.item(),
+            "feat":        l_feat.item(),
+            "expr_img":    l_expr_img.item(),
+            "neutral_img": l_neutral_img.item(),
         }
         return l_total, metrics

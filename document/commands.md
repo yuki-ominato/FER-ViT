@@ -310,9 +310,9 @@ CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_image_vit.py \
 
 ```bash
 python data/extract_style_latents.py \
-  --latent_dir           latents/fer2013_e4e/train \
-  --out_dir              latents/fer2013_e4e/train_sty_fer \
-  --style_extractor_path outputs/afs_fer/20260701_155645/checkpoints/best_model.pt \
+  --latent_dir           latents/rafdb_e4e/train \
+--out_dir              latents/rafdb_e4e/test_sty_fer \
+  --style_extractor_path outputs/afs_fer_raf-db/20260702_013713/checkpoints/best_model.pt \
   --batch_size           256
 
 python data/extract_style_latents.py \
@@ -352,6 +352,50 @@ CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_latent_vit.py \
   --latent_val_dir   latents/fer2013_e4e/val_sty \
   --epochs 60 --batch_size 64
 ```
+
+---
+
+## 5. StyleExtractor による分解の可視化
+
+`eval/visualize_decomposition.py` を使い、W+ 潜在コードを `w`（元） / `w_expr = h(w)`（感情成分） / `w_id = w − h(w)`（アイデンティティ残差）に分解して StyleGAN2 でデコードし、横並びグリッド画像として保存する。感情成分が実際に分離できているかを視覚的に確認するためのスクリプト。
+
+`--latent_dir` には **抽出前の元 latent** を渡す（`extract_style_latents.py` の出力ではない点に注意）。
+
+### 感情クラスごとに1サンプルずつ（--per_class）
+
+```bash
+python eval/visualize_decomposition.py \
+  --latent_dir  latents/rafdb_e4e/train \
+  --extractor   outputs/afs_fer_raf-db/20260702_013713/checkpoints/best_model.pt \
+  --psp_path    pretrained_models/e4e_ffhq_encode.pt \
+  --out_dir     eval_output/decomposition \
+  --per_class
+```
+
+### ランダムに n_samples 枚
+
+```bash
+python eval/visualize_decomposition.py \
+  --latent_dir  latents/rafdb_e4e/train \
+  --extractor   outputs/afs_fer_raf-db/20260702_013713/checkpoints/best_model.pt \
+  --psp_path    pretrained_models/e4e_ffhq_encode.pt \
+  --out_dir     eval_output/decomposition \
+  --n_samples   8
+```
+
+### 特定の感情ラベルのみ（例: 0=angry, 3=happy, 4=neutral）
+
+```bash
+python eval/visualize_decomposition.py \
+  --latent_dir  latents/rafdb_e4e/train \
+  --extractor   outputs/afs_fer_raf-db/20260702_013713/checkpoints/best_model.pt \
+  --psp_path    pretrained_models/e4e_ffhq_encode.pt \
+  --out_dir     eval_output/decomposition \
+  --labels      0 3 4 \
+  --n_samples   3
+```
+
+出力は `eval_output/decomposition/decomposition.png` に保存される。
 
 ---
 

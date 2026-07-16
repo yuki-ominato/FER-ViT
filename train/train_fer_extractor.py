@@ -6,17 +6,36 @@ AFSFERLoss を使い、StyleExtractor h と ExprClassifier を共同学習する
 
 主な変更点（対 train_style_extractor.py）:
     ・損失関数を AFSFERLoss に変更
-        L_expr   : h(w) が感情ラベルに識別可能か（ジェネレータ不要）
-        L_neutral: w − h(w) が無表情ラベル(=4)に識別可能か（ジェネレータ不要）
-        L_id     : ArcFace によるアイデンティティ保存（ジェネレータ必要）
-        L_sparse : 非表情 W+ 層のスパース性（ジェネレータ不要）
-        L_cons   : h の一貫性（ジェネレータ不要）
-    ・ImageProvider が不要（L_expr / L_neutral は潜在空間で完結）
-    ・L_id 用に G(w_new) と G(w_src) を内部で生成
-    ・optimizer が h と criterion.classifier を両方最適化する
+        L_expr       : h(w) が感情ラベルに識別可能か（潜在空間、ジェネレータ不要、補助）
+        L_neutral    : w − h(w) が無表情ラベル(=4)に識別可能か（潜在空間、ジェネレータ不要、補助）
+        L_id         : ArcFace によるアイデンティティ保存（ジェネレータ必要）
+        L_sparse     : 非表情 W+ 層のスパース性（ジェネレータ不要）
+        L_cons       : h の一貫性（ジェネレータ不要）
+        L_expr_img   : 画像ベース FER モデルで G(w_new) がターゲット表情ラベルに一致するか
+                       （ジェネレータ必要、--fer_image_ckpt 指定時のみ有効）
+        L_neutral_img: 画像ベース FER モデルで G(w_src − h_src) が無表情に見えるか
+                       （ジェネレータ必要、--fer_image_ckpt 指定時のみ有効）
+    ・ImageProvider が不要（train_style_extractor.py のような実写真参照は使わない）
+    ・L_id/L_feat/L_expr_img/L_neutral_img 用に G(w_src), G(w_src−h_src), G(w_new) を内部で生成
+    ・optimizer が h と criterion.classifier を両方最適化する（fer_image は凍結・学習対象外）
+
+    document/AFS_FER_diagnosis.md で報告した「L_expr/L_neutral が Generator を経由せず
+    生の潜在ベクトルにのみ作用しており、視覚的に知覚できる表情変化を強制する圧力が
+    存在しない」という設計乖離を修正するため、L_expr_img/L_neutral_img を追加した。
+    --fer_image_ckpt を指定しない場合は従来どおり（これらの損失が 0）動作する。
 
 Usage:
-    # generator あり（L_id 有効）
+    # generator あり + 画像ベース FER 損失あり（推奨: 表情の視覚的な分離を保証する）
+    python train/train_fer_extractor.py \\
+        --latent_dir     latents/rafdb_e4e/train \\
+        --val_latent_dir latents/rafdb_e4e/test \\
+        --psp_path       pretrained_models/e4e_ffhq_encode.pt \\
+        --arcface_path   pretrained_models/model_ir_se50.pth \\
+        --fer_image_ckpt experiments/image_scratch/<run_id>/checkpoints/best_model.pt \\
+        --out_dir        outputs/afs_fer \\
+        --epochs         10 --batch_size 4
+
+    # generator あり（L_id 有効、画像ベース FER 損失なし = 従来の挙動）
     python train/train_fer_extractor.py \\
         --latent_dir     latents/fer2013/train \\
         --val_latent_dir latents/fer2013/val \\
@@ -25,7 +44,7 @@ Usage:
         --out_dir        outputs/afs_fer \\
         --epochs         10 --batch_size 4
 
-    # generator なし（L_id = 0、高速）
+    # generator なし（L_id = L_expr_img = L_neutral_img = 0、高速）
     python train/train_fer_extractor.py \\
         --latent_dir     latents/fer2013/train \\
         --val_latent_dir latents/fer2013/val \\
@@ -111,13 +130,16 @@ def run_epoch(
     is_train = optimizer is not None
     h.train() if is_train else h.eval()
     criterion.train() if is_train else criterion.eval()
-    # ArcFace は凍結済みのため常に eval モードを維持する。
-    # criterion.train() が再帰的に BatchNorm を訓練モードに切り替えるのを戻す。
+    # ArcFace / 画像ベース FER モデルは凍結済みのため常に eval モードを維持する。
+    # criterion.train() が再帰的に BatchNorm/Dropout を訓練モードに切り替えるのを戻す。
     if hasattr(criterion, 'arcface'):
         criterion.arcface.eval()
+    if getattr(criterion, 'fer_image', None) is not None:
+        criterion.fer_image.eval()
 
     totals = {"loss": 0.0, "expr": 0.0, "id": 0.0,
-              "neutral": 0.0, "sparse": 0.0, "cons": 0.0, "feat": 0.0}
+              "neutral": 0.0, "sparse": 0.0, "cons": 0.0, "feat": 0.0,
+              "expr_img": 0.0, "neutral_img": 0.0}
     n_batches = 0
 
     ctx = torch.enable_grad() if is_train else torch.no_grad()
@@ -134,12 +156,17 @@ def run_epoch(
             w_new = (w_src - h_src) + h_tgt              # 表情転送後の潜在コード
             h_new = h(w_new)                              # 一貫性損失用
 
-            # ---- L_id / L_feat 用画像生成（generator が利用可能な場合のみ）----
-            # 呼び出し順が重要: G(w_src) を先に呼び、G(w_new) を最後に呼ぶ。
-            # feat_hook は最後に発火した generator 呼び出しの特徴を保持するため、
-            # G(w_new) を最後にしないと criterion 内の L_feat が G(w_new) の特徴を
-            # 読めなくなる（G(w_src) の特徴で上書きされてしまう）。
-            img_gen = img_src_gen = None
+            # ---- L_id / L_feat / L_expr_img / L_neutral_img 用画像生成 ----
+            # （generator が利用可能な場合のみ）
+            # 呼び出し順が重要: G(w_src) → G(w_id_src) → G(w_new) の順に呼び、
+            # G(w_new) を最後にする。feat_hook は最後に発火した generator 呼び出しの
+            # 特徴を保持するため、G(w_new) を最後にしないと criterion 内の L_feat が
+            # G(w_new) の特徴を読めなくなる（他の呼び出しの特徴で上書きされてしまう）。
+            #
+            # G(w_id_src) は w_id_src = w_src - h_src に依存するため no_grad にはしない
+            # （h への勾配が Generator を経由して流れる必要がある。Generator 自体の
+            # パラメータは load_generator() で requires_grad_(False) 済み）。
+            img_gen = img_src_gen = img_id_src_gen = None
             if generator is not None:
                 with torch.no_grad():
                     img_src_raw, _ = generator(
@@ -149,6 +176,16 @@ def run_epoch(
                         return_latents=False,
                     )
                     img_src_gen = face_pool(img_src_raw)  # 固定参照; 勾配不要
+
+                # L_neutral_img 用: identity 側だけを残した潜在コードをデコード
+                w_id_src = w_src - h_src
+                img_id_raw, _ = generator(
+                    [w_id_src],
+                    input_is_latent=True,
+                    randomize_noise=False,
+                    return_latents=False,
+                )
+                img_id_src_gen = face_pool(img_id_raw)
 
                 # G(w_new) を最後に呼ぶ → feat_hook.feat = G(w_new) の 32×32 特徴
                 img_gen_raw, _ = generator(
@@ -166,6 +203,7 @@ def run_epoch(
                 label_src, label_tgt,
                 img_gen=img_gen,
                 img_src=img_src_gen,
+                img_id_src=img_id_src_gen,
             )
 
             if is_train:
@@ -205,6 +243,11 @@ def parse_args() -> argparse.Namespace:
                    help="model_ir_se50.pth へのパス")
     p.add_argument("--no_generator",    action="store_true",
                    help="指定すると generator をロードせず L_id = 0 で学習（高速）")
+    p.add_argument("--fer_image_ckpt",  default=None,
+                   help="train/train_image_vit.py で学習した画像ベース FER モデルの "
+                        "best_model.pt へのパス。指定すると L_expr_img/L_neutral_img "
+                        "（画像を実際にデコードして表情ラベル一致を評価する損失）が有効になる。"
+                        "省略時はこれらの損失が 0 になり、旧来の潜在空間のみの評価に戻る。")
 
     # 出力
     p.add_argument("--out_dir",         default="outputs/afs_fer")
@@ -227,6 +270,12 @@ def parse_args() -> argparse.Namespace:
                    help="L_sparse の係数（非表情 W+ 層のスパース性）")
     p.add_argument("--lambda_cons",     type=float, default=0.1,
                    help="L_cons の係数（スタイル抽出の一貫性）")
+    p.add_argument("--lambda_expr_img",    type=float, default=1.0,
+                   help="L_expr_img の係数（画像ベース FER モデルでの表情転写評価; "
+                        "fer_image_ckpt 未指定時は無効）")
+    p.add_argument("--lambda_neutral_img", type=float, default=0.5,
+                   help="L_neutral_img の係数（画像ベース FER モデルでの残差無表情化評価; "
+                        "fer_image_ckpt 未指定時は無効）")
 
     p.add_argument("--device",          default="cuda")
     return p.parse_args()
@@ -258,14 +307,17 @@ def main() -> None:
     print(f"StyleExtractor parameters: {sum(p.numel() for p in h.parameters()):,}")
 
     criterion = AFSFERLoss(
-        arcface_path  = args.arcface_path,
-        generator     = generator,
-        lambda_expr   = args.lambda_expr,
-        lambda_id     = args.lambda_id,
-        lambda_feat   = args.lambda_feat,
-        lambda_neutral= args.lambda_neutral,
-        lambda_sparse = args.lambda_sparse,
-        lambda_cons   = args.lambda_cons,
+        arcface_path      = args.arcface_path,
+        generator         = generator,
+        fer_image_ckpt    = args.fer_image_ckpt,
+        lambda_expr       = args.lambda_expr,
+        lambda_id         = args.lambda_id,
+        lambda_feat       = args.lambda_feat,
+        lambda_neutral    = args.lambda_neutral,
+        lambda_sparse     = args.lambda_sparse,
+        lambda_cons       = args.lambda_cons,
+        lambda_expr_img   = args.lambda_expr_img,
+        lambda_neutral_img= args.lambda_neutral_img,
     ).to(device)
     print(f"ExprClassifier parameters: {sum(p.numel() for p in criterion.classifier.parameters()):,}")
 
@@ -306,7 +358,8 @@ def main() -> None:
     print(f"Best model criterion: {monitor_key}")
     print(f"Loss weights: expr={args.lambda_expr} id={args.lambda_id} "
           f"feat={args.lambda_feat} neutral={args.lambda_neutral} "
-          f"sparse={args.lambda_sparse} cons={args.lambda_cons}")
+          f"sparse={args.lambda_sparse} cons={args.lambda_cons} "
+          f"expr_img={args.lambda_expr_img} neutral_img={args.lambda_neutral_img}")
 
     log = []
     best_loss = float("inf")
@@ -328,7 +381,9 @@ def main() -> None:
             f"feat={train_m['feat']:.4f}  "
             f"neutral={train_m['neutral']:.4f}  "
             f"sparse={train_m['sparse']:.4f}  "
-            f"cons={train_m['cons']:.4f}",
+            f"cons={train_m['cons']:.4f}  "
+            f"expr_img={train_m['expr_img']:.4f}  "
+            f"neutral_img={train_m['neutral_img']:.4f}",
             end="",
         )
 
