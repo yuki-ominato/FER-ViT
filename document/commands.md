@@ -128,19 +128,24 @@ python train/train_style_extractor.py \
 `train/train_fer_extractor.py` を使う。  
 AFS 原論文の損失を FER タスク向けに再設計したバリアント。
 
-| 損失 | 内容 | ジェネレータ必要 |
-|------|------|:---:|
-| `L_expr` | h(w) が感情ラベルに識別可能か（潜在空間、補助） | ✗ |
-| `L_neutral` | w−h(w) が無表情(4)に識別可能か（潜在空間、補助） | ✗ |
-| `L_id` | ArcFace でアイデンティティ保存 | ✓ |
-| `L_sparse` | 非表情 W+ 層(0-3, 12-17)をゼロに近づける | ✗ |
-| `L_cons` | h(w_new) ≈ h(w_tgt) の一貫性 | ✗ |
-| `L_expr_img` | 画像ベースFERモデルで G(w_new) がターゲット表情ラベルに一致するか（`--fer_image_ckpt` 指定時のみ有効） | ✓ |
-| `L_neutral_img` | 画像ベースFERモデルで G(w_src−h_src) が無表情に見えるか（`--fer_image_ckpt` 指定時のみ有効） | ✓ |
+| 損失 | 内容 | ジェネレータ必要 | 既定の重み |
+|------|------|:---:|:---:|
+| `L_expr` | h(w) が感情ラベルに識別可能か（潜在空間、補助） | ✗ | `0.0`（無効） |
+| `L_neutral` | w−h(w) が無表情(4)に識別可能か（潜在空間、補助） | ✗ | `0.0`（無効） |
+| `L_id` | ArcFace でアイデンティティ保存 | ✓ | `1.0` |
+| `L_sparse` | 非表情 W+ 層(0-3, 12-17)をゼロに近づける | ✗ | `0.02` |
+| `L_cons` | h(w_new) ≈ h(w_tgt) の一貫性 | ✗ | `0.1` |
+| `L_expr_img` | 画像ベースFERモデルで G(w_new) がターゲット表情ラベルに一致するか（`--fer_image_ckpt` 指定時のみ有効） | ✓ | `1.0` |
+| `L_neutral_img` | 画像ベースFERモデルで G(w_src−h_src) が無表情に見えるか（`--fer_image_ckpt` 指定時のみ有効） | ✓ | `0.5` |
 
 `L_expr`/`L_neutral` は Generator を経由せず潜在ベクトルにのみ作用する補助信号であり、
-表情分離が実際に画像として視認できることを保証するのは `L_expr_img`/`L_neutral_img` 側。
-詳しい経緯は `document/AFS_FER_diagnosis.md` を参照。
+生の潜在ベクトルを分類器の重みで増幅するだけでCEを満たせてしまうショートカットの
+温床になりうる（詳しい経緯は `document/AFS_FER_diagnosis.md` を参照）。この診断結果を受けて
+`--lambda_expr`/`--lambda_neutral` の既定値は `0.0`（無効）に変更した。表情分離が実際に
+画像として視認できることを保証するのは `L_expr_img`/`L_neutral_img` 側であり、
+`--fer_image_ckpt` を指定する通常の運用ではこれらのままでよい。`--no_generator` など
+画像ベース損失が一切使えない構成でのみ、`--lambda_expr`/`--lambda_neutral` を明示的に
+非0にして表情分離の教師信号を確保する。
 
 ### 画像ベースFER損失あり（推奨・設計乖離の修正込み）
 
@@ -163,7 +168,9 @@ python train/train_fer_extractor.py \
 `--lambda_neutral_img`（既定 0.5）で重みを調整できる。生成器呼び出しが1回増える
 （`G(w_src−h_src)`）ため、以下の従来コマンドよりやや学習時間が長くなる。
 
-### 基本（ジェネレータあり、L_id 有効、画像ベースFER損失なし = 旧来の挙動）
+### 基本（ジェネレータあり、L_id 有効、画像ベースFER損失なし = 旧来の挙動を再現）
+
+画像ベースの表情教師信号が無いため、`--lambda_expr`/`--lambda_neutral` を明示的に有効化する。
 
 ```bash
 python train/train_fer_extractor.py \
@@ -171,12 +178,16 @@ python train/train_fer_extractor.py \
   --val_latent_dir latents/fer2013/val \
   --psp_path       pretrained_models/e4e_ffhq_encode.pt \
   --arcface_path   pretrained_models/model_ir_se50.pth \
+  --lambda_expr    1.0 \
+  --lambda_neutral 0.5 \
   --out_dir        outputs/afs_fer \
   --epochs         10 \
   --batch_size     4
 ```
 
-### 高速版（ジェネレータなし、L_id = L_expr_img = L_neutral_img = 0）
+### 高速版（ジェネレータなし、L_id = L_feat = L_expr_img = L_neutral_img = 0）
+
+表情分離の教師信号が `L_expr`/`L_neutral` しか残らないため、必ず明示的に有効化する。
 
 ```bash
 python train/train_fer_extractor.py \
@@ -184,8 +195,10 @@ python train/train_fer_extractor.py \
   --val_latent_dir latents/fer2013/val \
   --psp_path       pretrained_models/e4e_ffhq_encode.pt \
   --arcface_path   pretrained_models/model_ir_se50.pth \
-  --out_dir        outputs/afs_fer \
   --no_generator \
+  --lambda_expr    1.0 \
+  --lambda_neutral 0.5 \
+  --out_dir        outputs/afs_fer \
   --epochs         10 \
   --batch_size     16
 ```

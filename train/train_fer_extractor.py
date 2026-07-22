@@ -6,8 +6,10 @@ AFSFERLoss を使い、StyleExtractor h と ExprClassifier を共同学習する
 
 主な変更点（対 train_style_extractor.py）:
     ・損失関数を AFSFERLoss に変更
-        L_expr       : h(w) が感情ラベルに識別可能か（潜在空間、ジェネレータ不要、補助）
-        L_neutral    : w − h(w) が無表情ラベル(=4)に識別可能か（潜在空間、ジェネレータ不要、補助）
+        L_expr       : h(w) が感情ラベルに識別可能か（潜在空間、ジェネレータ不要、補助、
+                       デフォルト無効 lambda_expr=0.0）
+        L_neutral    : w − h(w) が無表情ラベル(=4)に識別可能か（潜在空間、ジェネレータ不要、補助、
+                       デフォルト無効 lambda_neutral=0.0）
         L_id         : ArcFace によるアイデンティティ保存（ジェネレータ必要）
         L_sparse     : 非表情 W+ 層のスパース性（ジェネレータ不要）
         L_cons       : h の一貫性（ジェネレータ不要）
@@ -21,11 +23,17 @@ AFSFERLoss を使い、StyleExtractor h と ExprClassifier を共同学習する
 
     document/AFS_FER_diagnosis.md で報告した「L_expr/L_neutral が Generator を経由せず
     生の潜在ベクトルにのみ作用しており、視覚的に知覚できる表情変化を強制する圧力が
-    存在しない」という設計乖離を修正するため、L_expr_img/L_neutral_img を追加した。
-    --fer_image_ckpt を指定しない場合は従来どおり（これらの損失が 0）動作する。
+    存在しない」という設計乖離への対応として、L_expr_img/L_neutral_img を追加した。
+    さらに、L_expr/L_neutral 自体が「生の潜在ベクトルを分類器の重みで増幅するだけで
+    満たせるショートカット」になりうるという診断結果を踏まえ、lambda_expr/lambda_neutral の
+    デフォルトを 0.0（無効）に変更した。画像ベース損失が使える構成では L_expr_img/L_neutral_img
+    だけで十分であり、L_expr/L_neutral は --no_generator（画像ベース損失が一切使えない高速
+    モード）でのみ、表情分離の教師信号を確保するために明示的に非 0 を指定する想定である。
+    コード自体は後方互換のため残しているが、通常の運用では無効のままでよい。
 
 Usage:
     # generator あり + 画像ベース FER 損失あり（推奨: 表情の視覚的な分離を保証する）
+    # L_expr/L_neutral はデフォルト0のまま（L_expr_img/L_neutral_imgが代替する）
     python train/train_fer_extractor.py \\
         --latent_dir     latents/rafdb_e4e/train \\
         --val_latent_dir latents/rafdb_e4e/test \\
@@ -35,23 +43,29 @@ Usage:
         --out_dir        outputs/afs_fer \\
         --epochs         10 --batch_size 4
 
-    # generator あり（L_id 有効、画像ベース FER 損失なし = 従来の挙動）
+    # generator あり（L_id 有効、画像ベース FER 損失なし = 旧来の挙動を再現する場合）
+    # 画像ベースの表情教師信号が無いため、潜在ベースの L_expr/L_neutral を明示的に有効化する
     python train/train_fer_extractor.py \\
         --latent_dir     latents/fer2013/train \\
         --val_latent_dir latents/fer2013/val \\
         --psp_path       pretrained_models/e4e_ffhq_encode.pt \\
         --arcface_path   pretrained_models/model_ir_se50.pth \\
+        --lambda_expr    1.0 \\
+        --lambda_neutral 0.5 \\
         --out_dir        outputs/afs_fer \\
         --epochs         10 --batch_size 4
 
-    # generator なし（L_id = L_expr_img = L_neutral_img = 0、高速）
+    # generator なし（L_id = L_feat = L_expr_img = L_neutral_img = 0、高速）
+    # 表情分離の教師信号が L_expr/L_neutral しか残らないため、必ず明示的に有効化する
     python train/train_fer_extractor.py \\
         --latent_dir     latents/fer2013/train \\
         --val_latent_dir latents/fer2013/val \\
         --psp_path       pretrained_models/e4e_ffhq_encode.pt \\
         --arcface_path   pretrained_models/model_ir_se50.pth \\
-        --out_dir        outputs/afs_fer \\
         --no_generator \\
+        --lambda_expr    1.0 \\
+        --lambda_neutral 0.5 \\
+        --out_dir        outputs/afs_fer \\
         --epochs         10 --batch_size 16
 """
 
@@ -258,14 +272,25 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lr",              type=float, default=1e-4)
 
     # 損失係数
-    p.add_argument("--lambda_expr",     type=float, default=1.0,
-                   help="L_expr の係数（表情識別可能性）")
+    p.add_argument("--lambda_expr",     type=float, default=0.0,
+                   help="L_expr の係数（h(w) を潜在ベクトルのまま分類する補助損失）。"
+                        "生の潜在ベクトルに直接作用するため、視覚的に無意味な方向を"
+                        "分類器の重みで増幅するだけで満たせてしまうショートカットの"
+                        "温床になりうる（document/AFS_FER_diagnosis.md 参照）。"
+                        "デフォルトは無効(0.0)。--fer_image_ckpt による L_expr_img が"
+                        "同じ意図をより信頼できる形で代替するため、通常は0のままでよい。"
+                        "--no_generator 使用時など画像ベース損失が一切使えない場合のみ、"
+                        "表情分離の教師信号を確保するために明示的に非0(例: 1.0)を指定する")
     p.add_argument("--lambda_id",       type=float, default=1.0,
                    help="L_id の係数（アイデンティティ保存; generator が必要）")
     p.add_argument("--lambda_feat",     type=float, default=3.5,
                    help="L_feat の係数（StyleGAN2 32×32 中間特徴損失; 論文: 3.5）")
-    p.add_argument("--lambda_neutral",  type=float, default=0.5,
-                   help="L_neutral の係数（残差コードの無表情化）")
+    p.add_argument("--lambda_neutral",  type=float, default=0.0,
+                   help="L_neutral の係数（残差コードを潜在ベクトルのまま無表情に分類する"
+                        "補助損失）。L_expr と同じ理由でショートカットの温床になりうるため"
+                        "デフォルトは無効(0.0)。--fer_image_ckpt による L_neutral_img が"
+                        "同じ意図をより信頼できる形で代替する。--no_generator 使用時のみ"
+                        "明示的に非0(例: 0.5)を指定する")
     p.add_argument("--lambda_sparse",   type=float, default=0.02,
                    help="L_sparse の係数（非表情 W+ 層のスパース性）")
     p.add_argument("--lambda_cons",     type=float, default=0.1,
@@ -301,6 +326,14 @@ def main() -> None:
             generator, face_pool = load_generator(args.psp_path, device)
         except Exception as e:
             print(f"Warning: generator のロードに失敗しました ({e})。L_id = 0 で続行します。")
+
+    if (args.fer_image_ckpt is None
+            and args.lambda_expr == 0.0
+            and args.lambda_neutral == 0.0):
+        print("Warning: fer_image_ckpt 未指定かつ lambda_expr=lambda_neutral=0.0 のため、"
+              "表情分離を教師する損失が一つも有効になっていません。"
+              "--fer_image_ckpt を指定するか、--lambda_expr/--lambda_neutral を"
+              "明示的に非0にしてください。")
 
     # --- StyleExtractor & 損失関数 ---
     h = StyleExtractor().to(device)
