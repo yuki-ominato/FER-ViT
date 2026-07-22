@@ -227,6 +227,6 @@ temp.txt
 document/run_scripts.md
 document/EXPERIMENT_GUIDE.md
 document/run_script
-fer-vit/latent_analysis/svm_output_fer2013/
-fer-vit/eval_output/
-fer-vit/outputs/
+latent_analysis/svm_output*/
+eval_output/
+outputs/
