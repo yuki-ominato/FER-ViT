@@ -55,7 +55,7 @@ class SVMProjector:
         latent_dim = int(data.get('latent_dim', 512))
         self.seq_len    = seq_len
         self.latent_dim = latent_dim
-        print(f"SVMProjector: mode={mode}, N={tuple(N.shape)}, "
+        print(f"{type(self).__name__}: mode={mode}, N={tuple(N.shape)}, "
               f"seq_len={seq_len}, latent_dim={latent_dim}")
 
     @torch.no_grad()
@@ -72,6 +72,22 @@ class SVMProjector:
             return w_emotion.view(B, S, D)
         else:
             return (w_flat - w_emotion).view(B, S, D)
+
+
+class PCAProjector(SVMProjector):
+    """
+    PCA 感情部分空間への射影をバッチ単位で適用するクラス。
+
+    latent_analysis/build_pca_projection.py が出力する emotion_basis_pca.pt
+    (基底 N はラベルとの ANOVA F 値が高い上位 k 個の主成分) を読み込む。
+    射影の数式は SVMProjector と完全に同一（N の由来が SVM 係数か PCA 成分かの違いのみ）
+    なので、実装はそのまま継承する。
+
+    Args:
+        basis_path : emotion_basis_pca.pt へのパス。
+        mode       : "emotion" → 感情成分, "residual" → 非感情成分。
+        device     : 射影を実行するデバイス。
+    """
 
 
 def set_seed(seed: int = 42) -> None:
@@ -307,11 +323,14 @@ def main(args):
         use_leam=args.use_leam,
     ).to(device)
 
-    # SVM Projector の初期化
+    # SVM / PCA Projector の初期化（同時指定は不可。--svm_basis/--pca_basis で排他的に選択）
     projector = None
     if args.svm_basis is not None:
         projector = SVMProjector(args.svm_basis, args.svm_projection, device)
         print(f"\nSVM projection enabled: mode={args.svm_projection}")
+    elif args.pca_basis is not None:
+        projector = PCAProjector(args.pca_basis, args.pca_projection, device)
+        print(f"\nPCA projection enabled: mode={args.pca_projection}")
 
     # クラス重み計算
     if args.use_class_weights:
@@ -360,6 +379,8 @@ def main(args):
         'mixup': args.mixup,
         'svm_basis': args.svm_basis,
         'svm_projection': args.svm_projection if args.svm_basis is not None else None,
+        'pca_basis': args.pca_basis,
+        'pca_projection': args.pca_projection if args.pca_basis is not None else None,
     }
 
     config = {
@@ -501,9 +522,17 @@ if __name__ == "__main__":
 
     # SVM 射影
     parser.add_argument("--svm_basis", type=str, default=None,
-                        help="感情基底 N のパス (emotion_basis_N.pt)。省略時は射影なし。")
+                        help="感情基底 N のパス (emotion_basis_N.pt、latent_analysis/build_svm_projection.py で作成)。"
+                             "省略時は射影なし。--pca_basis と同時指定不可。")
     parser.add_argument("--svm_projection", choices=["emotion", "residual"], default="emotion",
                         help="射影の種類: emotion=感情成分のみ, residual=非感情成分のみ（--svm_basis 指定時のみ有効）")
+
+    # PCA 射影
+    parser.add_argument("--pca_basis", type=str, default=None,
+                        help="PCA感情基底 N のパス (emotion_basis_pca.pt、latent_analysis/build_pca_projection.py で作成)。"
+                             "省略時は射影なし。--svm_basis と同時指定不可。")
+    parser.add_argument("--pca_projection", choices=["emotion", "residual"], default="emotion",
+                        help="射影の種類: emotion=感情成分のみ, residual=非感情成分のみ（--pca_basis 指定時のみ有効）")
 
     # その他
     parser.add_argument("--seed", type=int, default=42)
@@ -516,5 +545,9 @@ if __name__ == "__main__":
 
     if args.data_fraction <= 0.0 or args.data_fraction > 1.0:
         raise ValueError(f"data_fraction must be in (0.0, 1.0], got {args.data_fraction}")
+
+    if args.svm_basis is not None and args.pca_basis is not None:
+        raise ValueError("--svm_basis と --pca_basis は同時に指定できません。"
+                          "どちらか一方の部分空間射影を選んでください。")
 
     main(args)

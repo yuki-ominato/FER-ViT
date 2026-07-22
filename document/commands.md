@@ -130,13 +130,40 @@ AFS 原論文の損失を FER タスク向けに再設計したバリアント�
 
 | 損失 | 内容 | ジェネレータ必要 |
 |------|------|:---:|
-| `L_expr` | h(w) が感情ラベルに識別可能か | ✗ |
-| `L_neutral` | w−h(w) が無表情(4)に識別可能か | ✗ |
+| `L_expr` | h(w) が感情ラベルに識別可能か（潜在空間、補助） | ✗ |
+| `L_neutral` | w−h(w) が無表情(4)に識別可能か（潜在空間、補助） | ✗ |
 | `L_id` | ArcFace でアイデンティティ保存 | ✓ |
 | `L_sparse` | 非表情 W+ 層(0-3, 12-17)をゼロに近づける | ✗ |
 | `L_cons` | h(w_new) ≈ h(w_tgt) の一貫性 | ✗ |
+| `L_expr_img` | 画像ベースFERモデルで G(w_new) がターゲット表情ラベルに一致するか（`--fer_image_ckpt` 指定時のみ有効） | ✓ |
+| `L_neutral_img` | 画像ベースFERモデルで G(w_src−h_src) が無表情に見えるか（`--fer_image_ckpt` 指定時のみ有効） | ✓ |
 
-### 基本（ジェネレータあり、L_id 有効）
+`L_expr`/`L_neutral` は Generator を経由せず潜在ベクトルにのみ作用する補助信号であり、
+表情分離が実際に画像として視認できることを保証するのは `L_expr_img`/`L_neutral_img` 側。
+詳しい経緯は `document/AFS_FER_diagnosis.md` を参照。
+
+### 画像ベースFER損失あり（推奨・設計乖離の修正込み）
+
+```bash
+python train/train_fer_extractor.py \
+  --latent_dir     latents/rafdb_e4e/train \
+  --val_latent_dir latents/rafdb_e4e/test \
+  --psp_path       pretrained_models/e4e_ffhq_encode.pt \
+  --arcface_path   pretrained_models/model_ir_se50.pth \
+  --fer_image_ckpt experiments/image_scratch/image_vit_d6_h8_do0.1_lr0.0001_bs64_ep200_frac100_20251209_203839/checkpoints/best_model.pt \
+  --out_dir        outputs/afs_fer_raf-db \
+  --epochs         10 \
+  --batch_size     4
+```
+
+`--fer_image_ckpt` には `train/train_image_vit.py` で学習した画像ベース FER モデル
+(`<out_dir>/<run_id>/checkpoints/best_model.pt`、同ディレクトリの `config.json` からアーキテクチャを復元)を渡す。
+上記は手元にある FER2013 学習済みモデルを流用した例。RAF-DB で学習した画像分類器があれば
+そちらに差し替えた方がドメインギャップが小さくなる。`--lambda_expr_img`（既定 1.0）/
+`--lambda_neutral_img`（既定 0.5）で重みを調整できる。生成器呼び出しが1回増える
+（`G(w_src−h_src)`）ため、以下の従来コマンドよりやや学習時間が長くなる。
+
+### 基本（ジェネレータあり、L_id 有効、画像ベースFER損失なし = 旧来の挙動）
 
 ```bash
 python train/train_fer_extractor.py \
@@ -149,7 +176,7 @@ python train/train_fer_extractor.py \
   --batch_size     4
 ```
 
-### 高速版（ジェネレータなし、L_id = 0）
+### 高速版（ジェネレータなし、L_id = L_expr_img = L_neutral_img = 0）
 
 ```bash
 python train/train_fer_extractor.py \
@@ -583,6 +610,78 @@ python train/train_latent_vit_v2.py \
     --svm_projection   residual \
     --experiment_name  svm_residual_only
 ```
+
+---
+
+## 8. PCA 感情部分空間分離
+
+`latent_analysis/` 以下のスクリプトを順に実行する。  
+SVM版（7. InterFaceGAN SVM）と同じ枠組みだが、基底 N を「LinearSVCの係数」ではなく
+「全データPCAの主成分のうちラベルとのANOVA F値が高い上位k個」から構築する。
+詳細は `document/PCA_projection.md` を参照。
+
+### ① PCA基底 N の構築（PCA適合＋成分選択を1コマンドで実行、train のみ使用）
+
+```bash
+python latent_analysis/build_pca_projection.py \
+    --latent_dir  latents/fer2013/train \
+    --output_dir  latent_analysis/pca_output_fer2013 \
+    --n_components 100 \
+    --k            7
+```
+
+### ② 全スプリットを射影（分離品質の定量評価に使う場合のみ）
+
+```bash
+python latent_analysis/project_latents_pca.py \
+    --basis       latent_analysis/pca_output_fer2013/emotion_basis_pca.pt \
+    --latent_root latents/fer2013 \
+    --output_root latents_pca_fer2013
+```
+
+### ③ 分離品質を評価（Baseline / Emotion Only / Residual Only を LinearSVC で比較）
+
+```bash
+python latent_analysis/evaluate_pca_subspace.py \
+    --latent_root latents_pca_fer2013 \
+    --train_split train \
+    --eval_split  test
+```
+
+### ④ ViT 訓練（3条件）
+
+#### Baseline（射影なし・比較用）
+
+```bash
+python train/train_latent_vit_v2.py \
+    --latent_train_dir latents/fer2013/train \
+    --latent_val_dir   latents/fer2013/val \
+    --experiment_name  pca_baseline
+```
+
+#### Emotion Only（感情成分のみ）
+
+```bash
+python train/train_latent_vit_v2.py \
+    --latent_train_dir latents/fer2013/train \
+    --latent_val_dir   latents/fer2013/val \
+    --pca_basis        latent_analysis/pca_output_fer2013/emotion_basis_pca.pt \
+    --pca_projection   emotion \
+    --experiment_name  pca_emotion_only
+```
+
+#### Residual Only（非感情成分のみ）
+
+```bash
+python train/train_latent_vit_v2.py \
+    --latent_train_dir latents/fer2013/train \
+    --latent_val_dir   latents/fer2013/val \
+    --pca_basis        latent_analysis/pca_output_fer2013/emotion_basis_pca.pt \
+    --pca_projection   residual \
+    --experiment_name  pca_residual_only
+```
+
+`--svm_basis` と `--pca_basis` は同時指定不可（両方指定するとエラーになる）。
 
 ---
 
