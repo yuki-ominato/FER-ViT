@@ -1,8 +1,22 @@
-CUBLAS_WORKSPACE_CONFIG=:16:8
-
 # 実行コマンド集
 
 すべてのコマンドは `fer-vit/` をカレントディレクトリとして実行する。
+一部のコマンド（`train_image_vit.py` / `train_image_cnn.py` / `train_latent_vit*.py`）は再現性確保のため
+先頭に `CUBLAS_WORKSPACE_CONFIG=:16:8` を付与している。
+
+## 目次
+
+1. [image → latent 変換](#1-image--latent-変換)
+2. [StyleExtractor の訓練（AFS 原論文損失）](#2-styleextractor-の訓練afs-原論文損失)
+3. [FER特化 StyleExtractor の訓練（AFSFERLoss）](#3-fer特化-styleextractor-の訓練afsferloss)
+4. [ImageViT の訓練](#4-imagevit-の訓練)
+5. [StyleExtractor の事前適用（オプション）](#5-styleextractor-の事前適用オプション)
+6. [StyleExtractor による分解の可視化](#6-styleextractor-による分解の可視化)
+7. [LatentViT の訓練](#7-latentvit-の訓練)
+8. [Image CNN の訓練と評価](#8-image-cnn-の訓練と評価)
+9. [InterFaceGAN SVM 感情部分空間分離](#9-interfacegan-svm-感情部分空間分離)
+10. [PCA 感情部分空間分離](#10-pca-感情部分空間分離)
+- [補足](#補足)
 
 ---
 
@@ -16,7 +30,7 @@ CUBLAS_WORKSPACE_CONFIG=:16:8
 python data/generate_latents.py \
   --dataset_type fer2013 \
   --data_root ../dataset/fer2013/train \
-  --latent_out latents/train \
+  --latent_out latents/fer2013/train \
   --encoder_model pretrained_models/psp_ffhq_encode.pt \
   --encoder_type psp \
   --batch_size 4
@@ -28,7 +42,7 @@ python data/generate_latents.py \
 python data/generate_latents.py \
   --dataset_type fer2013 \
   --data_root ../dataset/fer2013/val \
-  --latent_out latents/val \
+  --latent_out latents/fer2013/val \
   --encoder_model pretrained_models/psp_ffhq_encode.pt \
   --encoder_type psp \
   --batch_size 4
@@ -36,7 +50,7 @@ python data/generate_latents.py \
 python data/generate_latents.py \
   --dataset_type fer2013 \
   --data_root ../dataset/fer2013/test \
-  --latent_out latents/test \
+  --latent_out latents/fer2013/test \
   --encoder_model pretrained_models/psp_ffhq_encode.pt \
   --encoder_type psp \
   --batch_size 4
@@ -51,7 +65,7 @@ python data/generate_latents.py \
   --dataset_type raf-db \
   --data_root ../dataset/RAF-DB \
   --split train \
-  --latent_out latents/RAF-DB/train \
+  --latent_out latents/raf-db/train \
   --encoder_model pretrained_models/psp_ffhq_encode.pt \
   --encoder_type psp \
   --batch_size 4
@@ -60,7 +74,7 @@ python data/generate_latents.py \
   --dataset_type raf-db \
   --data_root ../dataset/RAF-DB \
   --split test \
-  --latent_out latents/RAF-DB/test \
+  --latent_out latents/raf-db/test \
   --encoder_model pretrained_models/psp_ffhq_encode.pt \
   --encoder_type psp \
   --batch_size 4
@@ -74,7 +88,7 @@ python data/generate_latents.py \
 python data/generate_latents.py \
   --dataset_type fer2013 \
   --data_root ../dataset/fer2013/train \
-  --latent_out latents/train_e4e \
+  --latent_out latents/fer2013/train_e4e \
   --encoder_model pretrained_models/e4e_ffhq_encode.pt \
   --encoder_type e4e \
   --batch_size 4
@@ -84,15 +98,15 @@ python data/generate_latents.py \
 
 ## 2. StyleExtractor の訓練（AFS 原論文損失）
 
-`train/train_style_extractor.py` を使う。  
+`train/train_style_extractor.py` を使う。
 事前に latent 変換済みの `.pt` ファイルが必要。
 
 ### 基本（案B: DiskImageProvider）
 
 ```bash
 python train/train_style_extractor.py \
-  --latent_dir    latents/train \
-  --val_latent_dir latents/val \
+  --latent_dir    latents/fer2013/train \
+  --val_latent_dir latents/fer2013/val \
   --psp_path      pretrained_models/psp_ffhq_encode.pt \
   --arcface_path  pretrained_models/model_ir_se50.pth \
   --out_dir       outputs/afs \
@@ -108,24 +122,24 @@ python train/train_style_extractor.py \
 
 ```bash
 python train/train_style_extractor.py \
-  --latent_dir    latents/rafdb_e4e/train \
-  --val_latent_dir latents/rafdb_e4e/test \
+  --latent_dir    latents/raf-db_e4e/train \
+  --val_latent_dir latents/raf-db_e4e/test \
   --psp_path      pretrained_models/e4e_ffhq_encode.pt\
   --arcface_path  pretrained_models/model_ir_se50.pth \
-  --out_dir       outputs/afs/rafdb-a \
+  --out_dir       outputs/afs/raf-db-a \
   --provider      a \
   --epochs        10 \
   --batch_size    4
 ```
 
-チェックポイントは `outputs/afs/<YYYYMMDD_HHMMSS>/checkpoints/` 以下に保存される。  
+チェックポイントは `outputs/afs/<YYYYMMDD_HHMMSS>/checkpoints/` 以下に保存される。
 - `best_model.pt` — val loss（指定なければ train loss）が改善したエポック
 
 ---
 
 ## 3. FER特化 StyleExtractor の訓練（AFSFERLoss）
 
-`train/train_fer_extractor.py` を使う。  
+`train/train_fer_extractor.py` を使う。
 AFS 原論文の損失を FER タスク向けに再設計したバリアント。
 
 | 損失 | 内容 | ジェネレータ必要 | 既定の重み |
@@ -151,8 +165,8 @@ AFS 原論文の損失を FER タスク向けに再設計したバリアント�
 
 ```bash
 python train/train_fer_extractor.py \
-  --latent_dir     latents/rafdb_e4e/train \
-  --val_latent_dir latents/rafdb_e4e/test \
+  --latent_dir     latents/raf-db_e4e/train \
+  --val_latent_dir latents/raf-db_e4e/test \
   --psp_path       pretrained_models/e4e_ffhq_encode.pt \
   --arcface_path   pretrained_models/model_ir_se50.pth \
   --fer_image_ckpt experiments/image_scratch/image_vit_d6_h8_do0.1_lr0.0001_bs64_ep200_frac100_20251209_203839/checkpoints/best_model.pt \
@@ -221,14 +235,14 @@ python train/train_fer_extractor.py \
   --batch_size     16
 ```
 
-チェックポイントは `outputs/afs_fer/<YYYYMMDD_HHMMSS>/checkpoints/` 以下に保存される。  
+チェックポイントは `outputs/afs_fer/<YYYYMMDD_HHMMSS>/checkpoints/` 以下に保存される。
 - `best_model.pt` の `'model_state'` に StyleExtractor h の重み
-- `best_model.pt` の `'classifier_state'` に ExprClassifier の重み（単体利用も可能）  
+- `best_model.pt` の `'classifier_state'` に ExprClassifier の重み（単体利用も可能）
 - `last_model.pt` — 毎エポック上書き（学習再開用）
 
 ---
 
-## 3. ImageViT の訓練
+## 4. ImageViT の訓練
 
 `train/train_image_vit.py` を使う。画像を直接入力する ViT モデル。
 
@@ -293,7 +307,7 @@ CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_image_vit.py \
 
 ### RAF-DB
 
-`--train_dir` と `--val_dir` には**データセットルートを同じパスで指定**する。  
+`--train_dir` と `--val_dir` には**データセットルートを同じパスで指定**する。
 内部で train / test split が自動的に使われる。
 
 ```bash
@@ -341,23 +355,23 @@ CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_image_vit.py \
 
 ---
 
-## 4. StyleExtractor の事前適用（オプション）
+## 5. StyleExtractor の事前適用（オプション）
 
-`train_latent_vit_afs.py` の代わりに、変換済み `.pt` を事前に作っておく方法。  
+`train_latent_vit_afs.py` の代わりに、変換済み `.pt` を事前に作っておく方法。
 エポックをまたいで何度も StyleExtractor を呼ばずに済むため、訓練速度が向上する。
 
 ### スタイル成分（w_sty = h(w)）を保存
 
 ```bash
 python data/extract_style_latents.py \
-  --latent_dir           latents/rafdb_e4e/train \
---out_dir              latents/rafdb_e4e/test_sty_fer \
+  --latent_dir           latents/raf-db_e4e/train \
+  --out_dir              latents/raf-db_e4e/test_sty_fer \
   --style_extractor_path outputs/afs_fer_raf-db/20260702_013713/checkpoints/best_model.pt \
   --batch_size           256
 
 python data/extract_style_latents.py \
-  --latent_dir           latents/val \
-  --out_dir              latents/val_sty \
+  --latent_dir           latents/fer2013/val \
+  --out_dir              latents/fer2013/val_sty \
   --style_extractor_path outputs/afs/<run_id>/checkpoints/best_model.pt \
   --batch_size           256
 ```
@@ -366,9 +380,9 @@ python data/extract_style_latents.py \
 
 ```bash
 python data/extract_style_latents.py \
-  --latent_dir           latents/train \
-  --out_dir              latents/train_id \
-  --style_extractor_path outputs/afs/<run_id>/checkpoints/best_model.pt \
+  --latent_dir           latents/raf-db_e4e/train \
+  --out_dir              latents/raf-db_e4e/test_id_fer \
+  --style_extractor_path outputs/afs_fer_raf-db/20260722_132636/checkpoints/best_model.pt \
   --mode                 identity \
   --batch_size           256
 ```
@@ -395,7 +409,7 @@ CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_latent_vit.py \
 
 ---
 
-## 5. StyleExtractor による分解の可視化
+## 6. StyleExtractor による分解の可視化
 
 `eval/visualize_decomposition.py` を使い、W+ 潜在コードを `w`（元） / `w_expr = h(w)`（感情成分） / `w_id = w − h(w)`（アイデンティティ残差）に分解して StyleGAN2 でデコードし、横並びグリッド画像として保存する。感情成分が実際に分離できているかを視覚的に確認するためのスクリプト。
 
@@ -405,7 +419,7 @@ CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_latent_vit.py \
 
 ```bash
 python eval/visualize_decomposition.py \
-  --latent_dir  latents/rafdb_e4e/train \
+  --latent_dir  latents/raf-db_e4e/train \
   --extractor   outputs/afs_fer_raf-db/20260702_013713/checkpoints/best_model.pt \
   --psp_path    pretrained_models/e4e_ffhq_encode.pt \
   --out_dir     eval_output/decomposition \
@@ -416,7 +430,7 @@ python eval/visualize_decomposition.py \
 
 ```bash
 python eval/visualize_decomposition.py \
-  --latent_dir  latents/rafdb_e4e/train \
+  --latent_dir  latents/raf-db_e4e/train \
   --extractor   outputs/afs_fer_raf-db/20260702_013713/checkpoints/best_model.pt \
   --psp_path    pretrained_models/e4e_ffhq_encode.pt \
   --out_dir     eval_output/decomposition \
@@ -427,7 +441,7 @@ python eval/visualize_decomposition.py \
 
 ```bash
 python eval/visualize_decomposition.py \
-  --latent_dir  latents/rafdb_e4e/train \
+  --latent_dir  latents/raf-db_e4e/train \
   --extractor   outputs/afs_fer_raf-db/20260702_013713/checkpoints/best_model.pt \
   --psp_path    pretrained_models/e4e_ffhq_encode.pt \
   --out_dir     eval_output/decomposition \
@@ -439,30 +453,30 @@ python eval/visualize_decomposition.py \
 
 ---
 
-## 6. LatentViT の訓練
+## 7. LatentViT の訓練
 
-`train/train_latent_vit.py` を使う。latent コードを入力とする ViT モデル。  
+`train/train_latent_vit.py` を使う。latent コードを入力とする ViT モデル。
 事前に latent 変換（手順 1）が必要。
 
 ### 基本設定
 
 ```bash
 CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_latent_vit.py \
-  --latent_train_dir latents/train \
-  --latent_val_dir   latents/val \
+  --latent_train_dir latents/fer2013/train \
+  --latent_val_dir   latents/fer2013/val \
   --epochs 60 \
   --batch_size 64 \
   --lr 1e-4 \
   --scheduler plateau \
-  --use_class_weights \
+  --use_class_weights
 ```
 
 ### カスタムアーキテクチャ
 
 ```bash
 CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_latent_vit.py \
-  --latent_train_dir latents/train \
-  --latent_val_dir   latents/val \
+  --latent_train_dir latents/fer2013/train \
+  --latent_val_dir   latents/fer2013/val \
   --latent_dim 512 \
   --seq_len 18 \
   --embed_dim 512 \
@@ -484,8 +498,8 @@ CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_latent_vit.py \
 
 ```bash
 CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_latent_vit_afs.py \
-  --latent_train_dir    latents/train \
-  --latent_val_dir      latents/val \
+  --latent_train_dir    latents/fer2013/train \
+  --latent_val_dir      latents/fer2013/val \
   --style_extractor_path outputs/afs/<run_id>/checkpoints/best_model.pt \
   --embed_dim 512 \
   --depth 6 \
@@ -499,11 +513,16 @@ CUBLAS_WORKSPACE_CONFIG=:16:8 python train/train_latent_vit_afs.py \
   --label_smoothing 0.1
 ```
 
-# 実行コマンド集
+---
 
-## train_image_cnn.py（2D Image CNN）
+## 8. Image CNN の訓練と評価
 
-### FER2013 × スクラッチ
+`train/train_image_cnn.py` で学習し、`eval/evaluate_image_cnn.py` で評価する。
+画像を直接入力する 2D CNN（ResNet ベース）モデル。
+
+### 訓練
+
+#### FER2013 × スクラッチ
 
 ```bash
 python train/train_image_cnn.py \
@@ -513,47 +532,45 @@ python train/train_image_cnn.py \
     --backbone resnet18
 ```
 
-### FER2013 × ImageNet 事前学習あり
+#### FER2013 × ImageNet 事前学習あり
 
 ```bash
 python train/train_image_cnn.py \
     --dataset fer2013 \
-    --train_dir /path/to/fer2013/train \
-    --val_dir   /path/to/fer2013/val \
+    --train_dir ../dataset/fer2013/train \
+    --val_dir   ../dataset/fer2013/val \
     --backbone resnet18 \
     --use_pretrained
 ```
 
-### RAF-DB × スクラッチ
+#### RAF-DB × スクラッチ
 
 ```bash
 python train/train_image_cnn.py \
     --dataset raf-db \
-    --train_dir /home/yuki/research2/dataset/RAF-DB \
-    --val_dir   /home/yuki/research2/dataset/RAF-DB \
+    --train_dir ../dataset/RAF-DB \
+    --val_dir   ../dataset/RAF-DB \
     --backbone resnet18
 ```
 
-### RAF-DB × ImageNet 事前学習あり
+#### RAF-DB × ImageNet 事前学習あり
 
 ```bash
 python train/train_image_cnn.py \
     --dataset raf-db \
-    --train_dir /home/yuki/research2/dataset/RAF-DB \
-    --val_dir   /home/yuki/research2/dataset/RAF-DB \
+    --train_dir ../dataset/RAF-DB \
+    --val_dir   ../dataset/RAF-DB \
     --backbone resnet18 \
     --use_pretrained
 ```
 
----
-
-## evaluate_image_cnn.py（評価）
+### 評価
 
 ```bash
 python eval/evaluate_image_cnn.py \
     --checkpoint_path experiments/<実験名>/<タイムスタンプ>/checkpoints/best_model.pt \
     --dataset fer2013 \
-    --test_dir /path/to/fer2013/test \
+    --test_dir ../dataset/fer2013/test \
     --output_dir eval_results/image_cnn
 ```
 
@@ -563,16 +580,15 @@ RAF-DB の場合:
 python eval/evaluate_image_cnn.py \
     --checkpoint_path experiments/<実験名>/<タイムスタンプ>/checkpoints/best_model.pt \
     --dataset raf-db \
-    --test_dir /home/yuki/research2/dataset/RAF-DB \
-    --output_dir eval_results/image_cnn_rafdb
+    --test_dir ../dataset/RAF-DB \
+    --output_dir eval_results/image_cnn_raf-db
 ```
-
 
 ---
 
-## 7. InterFaceGAN SVM 感情部分空間分離
+## 9. InterFaceGAN SVM 感情部分空間分離
 
-`latent_analysis/` 以下のスクリプトを順に実行する。  
+`latent_analysis/` 以下のスクリプトを順に実行する。
 すべて `fer-vit/` をカレントディレクトリとして実行する。
 
 ### ① SVM 学習（train のみ使用）
@@ -626,10 +642,10 @@ python train/train_latent_vit_v2.py \
 
 ---
 
-## 8. PCA 感情部分空間分離
+## 10. PCA 感情部分空間分離
 
-`latent_analysis/` 以下のスクリプトを順に実行する。  
-SVM版（7. InterFaceGAN SVM）と同じ枠組みだが、基底 N を「LinearSVCの係数」ではなく
+`latent_analysis/` 以下のスクリプトを順に実行する。
+SVM版（9. InterFaceGAN SVM）と同じ枠組みだが、基底 N を「LinearSVCの係数」ではなく
 「全データPCAの主成分のうちラベルとのANOVA F値が高い上位k個」から構築する。
 詳細は `document/PCA_projection.md` を参照。
 
@@ -709,6 +725,7 @@ python train/train_latent_vit_v2.py \
 | pSp チェックポイント | `pretrained_models/psp_ffhq_encode.pt` |
 | e4e チェックポイント | `pretrained_models/e4e_ffhq_encode.pt` |
 | ArcFace モデル | `pretrained_models/model_ir_se50.pth` |
-| latent キャッシュ (FER2013) | `latents/train`, `latents/val`, `latents/test` |
+| latent キャッシュ (FER2013) | `latents/fer2013/train`, `latents/fer2013/val`, `latents/fer2013/test` |
+| latent キャッシュ (RAF-DB) | `latents/raf-db/train`, `latents/raf-db/test` |
 | 実験ログ | `experiments/` |
 | StyleExtractor 出力 | `outputs/afs/<run_id>/` |
