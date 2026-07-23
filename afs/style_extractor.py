@@ -4,24 +4,30 @@ import torch.nn as nn
 
 class HighwayLayer(nn.Module):
     """
-    Single Highway layer as used in the AFS paper (style_extraction.py).
+    Single Highway layer as used in the AFS paper (style_extraction.py),
+    modified to use LayerNorm instead of BatchNorm1d.
 
     y = gate ⊙ nonlinear(x) + (1 − gate) ⊙ linear(x)
 
       gate      = sigmoid(W_gate · x)
-      nonlinear = act( BN( W_nonlinear · x ) )   ← BatchNorm1d before activation
+      nonlinear = act( LN( W_nonlinear · x ) )   ← LayerNorm before activation
       linear    = W_linear · x                    ← learned carry (NOT identity)
 
     Note: the carry path uses a separate learned Linear, not the identity.
     This differs from the classic Highway Network (Srivastava et al., 2015)
     where the carry is the identity.
+
+    LayerNorm (not BatchNorm1d) is used because training uses a small
+    batch_size (default 4): BatchNorm1d statistics estimated from 4 samples
+    are noisy and destabilize every downstream loss, whereas LayerNorm
+    normalizes per-sample and is batch-size independent.
     """
 
-    def __init__(self, dim: int, act: str = "lrelu", momentum: float = 0.1) -> None:
+    def __init__(self, dim: int, act: str = "lrelu") -> None:
         super().__init__()
         self.nonlinear = nn.Sequential(
             nn.Linear(dim, dim),
-            nn.BatchNorm1d(dim, momentum=momentum),
+            nn.LayerNorm(dim),
         )
         self.linear = nn.Linear(dim, dim)
         self.gate = nn.Linear(dim, dim)
@@ -57,12 +63,11 @@ class StyleBlock(nn.Module):
         mid_dim: int = 256,
         num_highway: int = 2,
         act: str = "lrelu",
-        momentum: float = 0.1,
     ) -> None:
         super().__init__()
         self.down = nn.Linear(in_dim, mid_dim)
         self.highways = nn.ModuleList(
-            [HighwayLayer(mid_dim, act=act, momentum=momentum) for _ in range(num_highway)]
+            [HighwayLayer(mid_dim, act=act) for _ in range(num_highway)]
         )
         self.up = nn.Linear(mid_dim, in_dim)
 
@@ -97,13 +102,12 @@ class StyleExtractor(nn.Module):
         mid_dim: int = 256,
         num_highway: int = 2,
         act: str = "lrelu",
-        momentum: float = 0.1,
     ) -> None:
         super().__init__()
         self.n_layers = n_layers
         self.blocks = nn.ModuleList(
             [
-                StyleBlock(latent_dim, mid_dim, num_highway, act, momentum)
+                StyleBlock(latent_dim, mid_dim, num_highway, act)
                 for _ in range(n_layers)
             ]
         )
