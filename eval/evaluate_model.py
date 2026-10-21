@@ -24,6 +24,7 @@ if project_root not in sys.path:
 
 from data.latent_dataset import LatentFERDataset
 from models_fer_vit.latent_vit import LatentViT
+from models_fer_vit.latent_vit_v2 import LatentViTv2
 from models_fer_vit.hybrid_latent_vit import create_hybrid_latent_vit
 
 
@@ -95,7 +96,32 @@ def load_model(checkpoint_path: str, device: str = "cuda"):
         }
         # model_config に含まれないキー（例: 'embed_dim'）が渡されないようにする
         model = create_hybrid_latent_vit(**hybrid_args).to(device)
-    
+
+    elif model_config.get('model') == 'LatentViTv2':
+        # LatentViTv2 (train_latent_vit_v2.py) の場合
+        print(
+            "Loading LatentViTv2 "
+            f"(use_lwn={model_config.get('use_lwn', False)}, "
+            f"use_spe={model_config.get('use_spe', False)}, "
+            f"use_leam={model_config.get('use_leam', False)})"
+        )
+
+        latent_vit_v2_args = {
+            'latent_dim': model_config.get('latent_dim', 512),
+            'seq_len': model_config.get('seq_len', 18),
+            'embed_dim': model_config.get('embed_dim', 512),
+            'depth': model_config.get('depth', 6),
+            'heads': model_config.get('heads', 8),
+            'mlp_dim': model_config.get('mlp_dim', 2048),
+            'num_classes': model_config.get('num_classes', 7),
+            'dropout': model_config.get('dropout', 0.1),
+            'use_lwn': model_config.get('use_lwn', False),
+            'use_lwn_residual': model_config.get('use_lwn_residual', False),
+            'use_spe': model_config.get('use_spe', False),
+            'use_leam': model_config.get('use_leam', False),
+        }
+        model = LatentViTv2(**latent_vit_v2_args).to(device)
+
     else:
         # 従来の LatentViT (スクラッチ学習) の場合
         print("Loading LatentViT (scratch model)")
@@ -234,25 +260,36 @@ def visualize_attention(model, sample_latent, device, save_path=None):
     
     with torch.no_grad():
         sample_latent = sample_latent.unsqueeze(0).to(device)  # (1, L, D)
-        
+
+        # LatentViTv2 は SemanticPE/LayerWiseNorm/LEAM の前処理を挟んだ上で
+        # 実際のTransformer本体は self.backbone に持つラッパーなので、
+        # 可視化対象のモジュール群は backbone 側から取り出す
+        if isinstance(model, LatentViTv2):
+            sample_latent = model.spe(sample_latent)
+            sample_latent = model.lwn(sample_latent)
+            sample_latent = model.leam(sample_latent)
+            backbone = model.backbone
+        else:
+            backbone = model
+
         # モデルの内部処理を再現
-        x = model.input_proj(sample_latent)  # (1, L, embed_dim)
+        x = backbone.input_proj(sample_latent)  # (1, L, embed_dim)
         b = x.size(0)
-        cls = model.cls_token.expand(b, -1, -1)  # (1, 1, embed_dim)
+        cls = backbone.cls_token.expand(b, -1, -1)  # (1, 1, embed_dim)
         x_with_cls = torch.cat([cls, x], dim=1)  # (1, L+1, embed_dim)
 
         # HybridLatentViT ('pos_embed') と LatentViT ('pos_emb') の両方に対応
-        if hasattr(model, 'pos_embed'):
-            pos = model.pos_embed  # HybridLatentViT の場合
-        elif hasattr(model, 'pos_emb'):
-            pos = model.pos_emb    # LatentViT の場合
+        if hasattr(backbone, 'pos_embed'):
+            pos = backbone.pos_embed  # HybridLatentViT の場合
+        elif hasattr(backbone, 'pos_emb'):
+            pos = backbone.pos_emb    # LatentViT の場合
         else:
             raise AttributeError("Model has neither 'pos_embed' nor 'pos_emb'")
 
         x_with_pos = x_with_cls + pos
-        
+
         # Transformer処理
-        x_out = model.transformer(x_with_pos)  # (1, L+1, embed_dim)
+        x_out = backbone.transformer(x_with_pos)  # (1, L+1, embed_dim)
         
         # CLSトークンと各潜在トークンの類似度を計算
         cls_token = x_out[:, 0]  # (1, embed_dim)
