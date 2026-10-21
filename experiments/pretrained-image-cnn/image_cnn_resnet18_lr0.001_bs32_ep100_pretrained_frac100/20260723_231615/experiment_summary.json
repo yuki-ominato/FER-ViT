@@ -1,0 +1,41 @@
+{
+  "experiment_name": "image_cnn_resnet18_lr0.001_bs32_ep100_pretrained_frac100",
+  "run_id": "experiments/image_cnn_resnet18_lr0.001_bs32_ep100_pretrained_frac100/20260723_231615",
+  "duration_seconds": 2075.1129879951477,
+  "final_metrics": {
+    "accuracy": 0.847457627118644,
+    "f1_macro": 0.7675443775109884,
+    "f1_weighted": 0.8436370782512543,
+    "best_f1_macro": 0.7689281215538869
+  },
+  "config": {
+    "model": {
+      "backbone": "resnet18",
+      "use_pretrained": true,
+      "num_classes": 7,
+      "dropout": 0.0,
+      "n_parameters": 11180103
+    },
+    "training": {
+      "epochs": 100,
+      "batch_size": 32,
+      "lr": 0.001,
+      "weight_decay": 0.05,
+      "optimizer": "adamw",
+      "scheduler": "warmup_cosine",
+      "use_augmentation": false,
+      "use_class_weights": false,
+      "label_smoothing": 0.1,
+      "grad_clip": null,
+      "seed": 42,
+      "data_fraction": 1.0
+    },
+    "data": {
+      "dataset": "raf-db",
+      "train_dir": "../dataset/RAF-DB",
+      "val_dir": "../dataset/RAF-DB",
+      "train_samples": 12271,
+      "val_samples": 3068
+    }
+  }
+}

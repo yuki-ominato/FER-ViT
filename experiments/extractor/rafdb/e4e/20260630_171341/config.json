@@ -1,0 +1,16 @@
+{
+  "latent_dir": "latents/rafdb_e4e/train",
+  "val_latent_dir": "latents/rafdb_e4e/test",
+  "psp_path": "pretrained_models/e4e_ffhq_encode.pt",
+  "arcface_path": "pretrained_models/model_ir_se50.pth",
+  "out_dir": "experiments/extractor/rafdb/e4e",
+  "provider": "a",
+  "img_root": "../dataset/RAF-DB/train",
+  "val_img_root": "../dataset/RAF-DB/test",
+  "epochs": 10,
+  "batch_size": 4,
+  "lr": 0.0001,
+  "lambda_feat": 3.5,
+  "lambda_cons": 0.1,
+  "device": "cuda"
+}

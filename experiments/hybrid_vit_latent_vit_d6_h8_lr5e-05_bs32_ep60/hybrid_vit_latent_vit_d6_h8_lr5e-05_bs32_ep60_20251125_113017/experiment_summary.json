@@ -1,0 +1,37 @@
+{
+  "experiment_name": "hybrid_vit_latent_vit_d6_h8_lr5e-05_bs32_ep60_finetuning_base",
+  "run_id": "hybrid_vit_latent_vit_d6_h8_lr5e-05_bs32_ep60_20251125_113017",
+  "duration_seconds": 2776.6997759342194,
+  "final_metrics": {
+    "accuracy": 0.5329466357308584,
+    "f1_macro": 0.5251895246201691,
+    "f1_weighted": 0.5320008971508652,
+    "best_f1_macro": 0.5256310102977715
+  },
+  "config": {
+    "model": {
+      "latent_dim": 512,
+      "seq_len": 18,
+      "model_size": "base",
+      "use_pretrained": true,
+      "freeze_transformer": false,
+      "freeze_stages": null,
+      "use_adapter": false,
+      "adapter_dim": null
+    },
+    "training": {
+      "epochs": 60,
+      "batch_size": 32,
+      "lr": 5e-05,
+      "weight_decay": 0.01,
+      "scheduler": "cosine",
+      "use_class_weights": false,
+      "use_layerwise_lr": true,
+      "seed": 42
+    },
+    "data": {
+      "train_dir": "latents/train",
+      "val_dir": "latents/val"
+    }
+  }
+}

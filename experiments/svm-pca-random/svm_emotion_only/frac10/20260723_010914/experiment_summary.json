@@ -1,0 +1,49 @@
+{
+  "experiment_name": "svm_emotion_only/frac10",
+  "run_id": "experiments/svm_emotion_only/frac10/20260723_010914",
+  "duration_seconds": 268.93955159187317,
+  "final_metrics": {
+    "accuracy": 0.2294663573085847,
+    "f1_macro": 0.2141438071972717,
+    "f1_weighted": 0.17789720201771228,
+    "best_f1_macro": 0.2710486222246382,
+    "data_fraction": 0.1
+  },
+  "config": {
+    "model": {
+      "model": "LatentViTv2",
+      "latent_dim": 512,
+      "seq_len": 18,
+      "embed_dim": 512,
+      "depth": 6,
+      "heads": 8,
+      "mlp_dim": 2048,
+      "num_classes": 7,
+      "dropout": 0.1,
+      "use_lwn": false,
+      "use_lwn_residual": false,
+      "use_spe": false,
+      "use_leam": false
+    },
+    "training": {
+      "epochs": 60,
+      "batch_size": 64,
+      "lr": 0.0001,
+      "weight_decay": 0.01,
+      "use_class_weights": true,
+      "scheduler": "plateau",
+      "seed": 42,
+      "data_fraction": 0.1,
+      "mixup": 0.0,
+      "svm_basis": "latent_analysis/svm_output_fer2013/emotion_basis_N.pt",
+      "svm_projection": "emotion"
+    },
+    "data": {
+      "train_dir": "latents/fer2013/train",
+      "val_dir": "latents/fer2013/val",
+      "train_samples_total": 24399,
+      "train_samples_used": 2438,
+      "val_samples": 4310
+    }
+  }
+}

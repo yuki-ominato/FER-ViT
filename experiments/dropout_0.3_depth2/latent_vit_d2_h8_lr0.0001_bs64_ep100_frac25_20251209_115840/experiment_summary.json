@@ -1,0 +1,41 @@
+{
+  "experiment_name": "latent_vit_d2_h8_lr0.0001_bs64_ep100_frac25",
+  "run_id": "latent_vit_d2_h8_lr0.0001_bs64_ep100_frac25_20251209_115840",
+  "duration_seconds": 191.77998805046082,
+  "final_metrics": {
+    "accuracy": 0.4408352668213457,
+    "f1_macro": 0.3902949474155228,
+    "f1_weighted": 0.44053348563827804,
+    "best_f1_macro": 0.40427289851231635,
+    "data_fraction": 0.25
+  },
+  "config": {
+    "model": {
+      "latent_dim": 512,
+      "seq_len": 18,
+      "embed_dim": 512,
+      "depth": 2,
+      "heads": 8,
+      "mlp_dim": 2048,
+      "num_classes": 7,
+      "dropout": 0.3
+    },
+    "training": {
+      "epochs": 100,
+      "batch_size": 64,
+      "lr": 0.0001,
+      "weight_decay": 0.01,
+      "use_class_weights": true,
+      "scheduler": "plateau",
+      "seed": 42,
+      "data_fraction": 0.25
+    },
+    "data": {
+      "train_dir": "latents/train",
+      "val_dir": "latents/val",
+      "train_samples_total": 24399,
+      "train_samples_used": 6097,
+      "val_samples": 4310
+    }
+  }
+}

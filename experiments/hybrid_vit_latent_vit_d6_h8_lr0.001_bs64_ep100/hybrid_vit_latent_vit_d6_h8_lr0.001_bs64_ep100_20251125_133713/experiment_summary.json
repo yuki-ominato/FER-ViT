@@ -1,0 +1,37 @@
+{
+  "experiment_name": "hybrid_vit_latent_vit_d6_h8_lr0.001_bs64_ep100_scratch_small",
+  "run_id": "hybrid_vit_latent_vit_d6_h8_lr0.001_bs64_ep100_20251125_133713",
+  "duration_seconds": 1342.7169969081879,
+  "final_metrics": {
+    "accuracy": 0.47703016241299306,
+    "f1_macro": 0.45205246076509303,
+    "f1_weighted": 0.4758361635344643,
+    "best_f1_macro": 0.4551566138435388
+  },
+  "config": {
+    "model": {
+      "latent_dim": 512,
+      "seq_len": 18,
+      "model_size": "small",
+      "use_pretrained": false,
+      "freeze_transformer": false,
+      "freeze_stages": null,
+      "use_adapter": false,
+      "adapter_dim": null
+    },
+    "training": {
+      "epochs": 100,
+      "batch_size": 64,
+      "lr": 0.001,
+      "weight_decay": 0.05,
+      "scheduler": "cosine",
+      "use_class_weights": false,
+      "use_layerwise_lr": false,
+      "seed": 42
+    },
+    "data": {
+      "train_dir": "latents/train",
+      "val_dir": "latents/val"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "experiment_name": "image_vit_d6_h8_do0.1_lr0.0001_bs64_ep200",
+  "run_id": "image_vit_d6_h8_do0.1_lr0.0001_bs64_ep200_20251209_171249",
+  "duration_seconds": 10924.925351858139,
+  "final_metrics": {
+    "accuracy": 0.35730858468677495,
+    "f1_macro": 0.31594435145373306,
+    "f1_weighted": 0.35956200282688927,
+    "best_f1_macro": 0.32676111397607305
+  },
+  "config": {
+    "model": {
+      "model_size": "custom",
+      "img_size": 224,
+      "patch_size": 16,
+      "embed_dim": 512,
+      "depth": 6,
+      "heads": 8,
+      "mlp_dim": 2048,
+      "num_classes": 7,
+      "dropout": 0.1,
+      "n_parameters": 19414023
+    },
+    "training": {
+      "epochs": 200,
+      "batch_size": 64,
+      "lr": 0.0001,
+      "weight_decay": 0.05,
+      "optimizer": "adamw",
+      "scheduler": "warmup_cosine",
+      "use_augmentation": false,
+      "use_class_weights": true,
+      "label_smoothing": 0.1,
+      "grad_clip": null,
+      "seed": 42,
+      "data_fraction": 0.5
+    },
+    "data": {
+      "train_dir": "../dataset/fer2013/train",
+      "val_dir": "../dataset/fer2013/val",
+      "train_samples": 12198,
+      "val_samples": 4310
+    }
+  }
+}

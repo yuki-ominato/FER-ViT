@@ -1,0 +1,51 @@
+{
+  "experiment_name": "afs/raf-db-a/fer_expr2",
+  "run_id": "experiments/afs/raf-db-a/fer_expr2/20260723_202912",
+  "duration_seconds": 483.9638457298279,
+  "final_metrics": {
+    "accuracy": 0.6890482398956975,
+    "f1_macro": 0.5720628932378782,
+    "f1_weighted": 0.6929480472358037,
+    "best_f1_macro": 0.5874011905831716,
+    "data_fraction": 1.0
+  },
+  "config": {
+    "model": {
+      "model": "LatentViTv2",
+      "latent_dim": 512,
+      "seq_len": 18,
+      "embed_dim": 512,
+      "depth": 6,
+      "heads": 8,
+      "mlp_dim": 2048,
+      "num_classes": 7,
+      "dropout": 0.1,
+      "use_lwn": false,
+      "use_lwn_residual": false,
+      "use_spe": false,
+      "use_leam": false
+    },
+    "training": {
+      "epochs": 60,
+      "batch_size": 64,
+      "lr": 0.0001,
+      "weight_decay": 0.01,
+      "use_class_weights": true,
+      "scheduler": "plateau",
+      "seed": 42,
+      "data_fraction": 1.0,
+      "mixup": 0.0,
+      "svm_basis": null,
+      "svm_projection": null,
+      "pca_basis": null,
+      "pca_projection": null
+    },
+    "data": {
+      "train_dir": "latents/rafdb_e4e/train_sty_fer2/",
+      "val_dir": "latents/rafdb_e4e/test_sty_fer2/",
+      "train_samples_total": 12271,
+      "train_samples_used": 12271,
+      "val_samples": 3068
+    }
+  }
+}

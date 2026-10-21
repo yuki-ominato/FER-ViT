@@ -1,0 +1,35 @@
+{
+  "model": {
+    "model_size": "small",
+    "img_size": 224,
+    "patch_size": 16,
+    "embed_dim": 384,
+    "depth": 12,
+    "heads": 6,
+    "mlp_dim": 1536,
+    "num_classes": 7,
+    "dropout": 0.1,
+    "use_pretrained": false,
+    "n_parameters": 21668359
+  },
+  "training": {
+    "epochs": 100,
+    "batch_size": 32,
+    "lr": 0.001,
+    "weight_decay": 0.05,
+    "optimizer": "adamw",
+    "scheduler": "warmup_cosine",
+    "use_augmentation": true,
+    "use_class_weights": true,
+    "label_smoothing": 0.1,
+    "grad_clip": null,
+    "seed": 42,
+    "data_fraction": 0.1
+  },
+  "data": {
+    "train_dir": "../dataset/RAF-DB",
+    "val_dir": "../dataset/RAF-DB",
+    "train_samples": 1225,
+    "val_samples": 3068
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "latent_dir": "latents/fer2013_e4e/train",
+  "val_latent_dir": "latents/fer2013_e4e/val",
+  "psp_path": "pretrained_models/e4e_ffhq_encode.pt",
+  "arcface_path": "pretrained_models/model_ir_se50.pth",
+  "out_dir": "experiments/extractor/fer2013/e4e/debug",
+  "provider": "a",
+  "img_root": null,
+  "val_img_root": null,
+  "epochs": 10,
+  "batch_size": 4,
+  "lr": 0.0001,
+  "lambda_feat": 3.5,
+  "lambda_cons": 0.1,
+  "device": "cuda"
+}

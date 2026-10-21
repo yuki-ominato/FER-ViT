@@ -1,0 +1,46 @@
+{
+  "experiment_name": "image_vit_d6_h8_do0.1_lr0.0001_bs64_ep50_frac10",
+  "run_id": "experiments/image_vit_d6_h8_do0.1_lr0.0001_bs64_ep50_frac10/20260724_021544",
+  "duration_seconds": 738.5205039978027,
+  "final_metrics": {
+    "accuracy": 0.24445893089960888,
+    "f1_macro": 0.20138444132696812,
+    "f1_weighted": 0.2723264355625798,
+    "best_f1_macro": 0.2030856854175287
+  },
+  "config": {
+    "model": {
+      "model_size": "custom",
+      "img_size": 224,
+      "patch_size": 16,
+      "embed_dim": 512,
+      "depth": 6,
+      "heads": 8,
+      "mlp_dim": 2048,
+      "num_classes": 7,
+      "dropout": 0.1,
+      "use_pretrained": false,
+      "n_parameters": 19414023
+    },
+    "training": {
+      "epochs": 50,
+      "batch_size": 64,
+      "lr": 0.0001,
+      "weight_decay": 0.05,
+      "optimizer": "adamw",
+      "scheduler": "warmup_cosine",
+      "use_augmentation": false,
+      "use_class_weights": true,
+      "label_smoothing": 0.1,
+      "grad_clip": null,
+      "seed": 42,
+      "data_fraction": 0.1
+    },
+    "data": {
+      "train_dir": "../dataset/RAF-DB",
+      "val_dir": "../dataset/RAF-DB",
+      "train_samples": 1225,
+      "val_samples": 3068
+    }
+  }
+}

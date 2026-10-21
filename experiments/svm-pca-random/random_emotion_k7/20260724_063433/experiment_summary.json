@@ -1,0 +1,51 @@
+{
+  "experiment_name": "random_emotion_k7",
+  "run_id": "experiments/random_emotion_k7/20260724_063433",
+  "duration_seconds": 747.8089330196381,
+  "final_metrics": {
+    "accuracy": 0.08735332464146023,
+    "f1_macro": 0.0792261697769397,
+    "f1_weighted": 0.042968298866835,
+    "best_f1_macro": 0.08601040366811212,
+    "data_fraction": 1.0
+  },
+  "config": {
+    "model": {
+      "model": "LatentViTv2",
+      "latent_dim": 512,
+      "seq_len": 18,
+      "embed_dim": 512,
+      "depth": 6,
+      "heads": 8,
+      "mlp_dim": 2048,
+      "num_classes": 7,
+      "dropout": 0.1,
+      "use_lwn": false,
+      "use_lwn_residual": false,
+      "use_spe": false,
+      "use_leam": false
+    },
+    "training": {
+      "epochs": 60,
+      "batch_size": 64,
+      "lr": 0.0001,
+      "weight_decay": 0.01,
+      "use_class_weights": true,
+      "scheduler": "plateau",
+      "seed": 42,
+      "data_fraction": 1.0,
+      "mixup": 0.0,
+      "svm_basis": "latent_analysis/random_output_raf-db/emotion_basis_random.pt",
+      "svm_projection": "emotion",
+      "pca_basis": null,
+      "pca_projection": null
+    },
+    "data": {
+      "train_dir": "latents/raf-db/train",
+      "val_dir": "latents/raf-db/test",
+      "train_samples_total": 12271,
+      "train_samples_used": 12271,
+      "val_samples": 3068
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "latent_dir": "latents/fer2013/train",
+  "val_latent_dir": "latents/fer2013/val",
+  "psp_path": "pretrained_models/psp_ffhq_encode.pt",
+  "arcface_path": "pretrained_models/model_ir_se50.pth",
+  "out_dir": "experiments/afs",
+  "provider": "a",
+  "img_root": "../dataset/fer2013/train",
+  "val_img_root": "../dataset/fer2013/val",
+  "epochs": 50,
+  "batch_size": 8,
+  "lr": 0.0001,
+  "lambda_cons": 0.1,
+  "device": "cuda"
+}

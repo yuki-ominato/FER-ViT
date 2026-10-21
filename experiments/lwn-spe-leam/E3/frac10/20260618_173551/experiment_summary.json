@@ -1,0 +1,46 @@
+{
+  "experiment_name": "lwn-spe-leam/E3/frac10",
+  "run_id": "experiments/lwn-spe-leam/E3/frac10/20260618_173551",
+  "duration_seconds": 127.2510154247284,
+  "final_metrics": {
+    "accuracy": 0.4220417633410673,
+    "f1_macro": 0.36334561929116155,
+    "f1_weighted": 0.4139989101167866,
+    "best_f1_macro": 0.3689229738604431,
+    "data_fraction": 0.1
+  },
+  "config": {
+    "model": {
+      "model": "LatentViTv2",
+      "latent_dim": 512,
+      "seq_len": 18,
+      "embed_dim": 512,
+      "depth": 6,
+      "heads": 8,
+      "mlp_dim": 2048,
+      "num_classes": 7,
+      "dropout": 0.1,
+      "use_lwn": false,
+      "use_spe": false,
+      "use_leam": true
+    },
+    "training": {
+      "epochs": 60,
+      "batch_size": 64,
+      "lr": 0.0001,
+      "weight_decay": 0.01,
+      "use_class_weights": false,
+      "scheduler": "plateau",
+      "seed": 42,
+      "data_fraction": 0.1,
+      "mixup": 1.0
+    },
+    "data": {
+      "train_dir": "latents/train",
+      "val_dir": "latents/val",
+      "train_samples_total": 24399,
+      "train_samples_used": 2438,
+      "val_samples": 4310
+    }
+  }
+}

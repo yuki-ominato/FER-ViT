@@ -208,7 +208,8 @@ latents/
 
 # results
 encode_results/
-experiments/
+experiment/**/*.pt
+experiment/**/logs
 experiments_other/
 eval_results/
 checkpoints/
@@ -227,6 +228,9 @@ temp.txt
 document/run_scripts.md
 document/EXPERIMENT_GUIDE.md
 document/run_script
-latent_analysis/svm_output*/
+latent_analysis/*output*/
 eval_output/
 outputs/
+latents_pca_fer2013/
+latents_pca_raf-db/
+latents_random_raf-db/

@@ -1,0 +1,49 @@
+{
+  "experiment_name": "lwn-spe-leam/E3/frac100_rafdb",
+  "run_id": "experiments/lwn-spe-leam/E3/frac100_rafdb/20260626_232651",
+  "duration_seconds": 889.4624605178833,
+  "final_metrics": {
+    "accuracy": 0.7320730117340287,
+    "f1_macro": 0.6305018275434875,
+    "f1_weighted": 0.7314962992442712,
+    "best_f1_macro": 0.6511334433933719,
+    "data_fraction": 1.0
+  },
+  "config": {
+    "model": {
+      "model": "LatentViTv2",
+      "latent_dim": 512,
+      "seq_len": 18,
+      "embed_dim": 512,
+      "depth": 6,
+      "heads": 8,
+      "mlp_dim": 2048,
+      "num_classes": 7,
+      "dropout": 0.1,
+      "use_lwn": false,
+      "use_lwn_residual": false,
+      "use_spe": false,
+      "use_leam": true
+    },
+    "training": {
+      "epochs": 60,
+      "batch_size": 64,
+      "lr": 0.0001,
+      "weight_decay": 0.01,
+      "use_class_weights": true,
+      "scheduler": "plateau",
+      "seed": 42,
+      "data_fraction": 1.0,
+      "mixup": 0.0,
+      "svm_basis": null,
+      "svm_projection": null
+    },
+    "data": {
+      "train_dir": "latents/rafdb/train",
+      "val_dir": "latents/rafdb/test",
+      "train_samples_total": 12271,
+      "train_samples_used": 12271,
+      "val_samples": 3068
+    }
+  }
+}

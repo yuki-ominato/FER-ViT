@@ -1,0 +1,39 @@
+{
+  "experiment_name": "latent_cnn_deep_ep60_bs64_lr0.0001",
+  "run_id": "latent_cnn_deep_ep60_bs64_lr0.0001_20251201_124448",
+  "duration_seconds": 283.7412211894989,
+  "final_metrics": {
+    "accuracy": 0.45730858468677493,
+    "f1_macro": 0.41739156749091005,
+    "f1_weighted": 0.4466763496462043,
+    "best_f1_macro": 0.41739156749091005,
+    "data_fraction": 1.0
+  },
+  "config": {
+    "model": {
+      "model_type": "deep",
+      "latent_dim": 512,
+      "seq_len": 18,
+      "num_classes": 7,
+      "dropout": 0.3,
+      "n_parameters": 5913608
+    },
+    "training": {
+      "epochs": 60,
+      "batch_size": 64,
+      "lr": 0.0001,
+      "weight_decay": 0.01,
+      "use_class_weights": true,
+      "scheduler": "plateau",
+      "seed": 42,
+      "data_fraction": 1.0
+    },
+    "data": {
+      "train_dir": "latents/train",
+      "val_dir": "latents/val",
+      "train_samples_total": 24399,
+      "train_samples_used": 24399,
+      "val_samples": 4310
+    }
+  }
+}

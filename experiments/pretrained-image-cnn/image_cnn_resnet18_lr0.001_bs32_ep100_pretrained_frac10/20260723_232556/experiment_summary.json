@@ -1,0 +1,41 @@
+{
+  "experiment_name": "image_cnn_resnet18_lr0.001_bs32_ep100_pretrained_frac10",
+  "run_id": "experiments/image_cnn_resnet18_lr0.001_bs32_ep100_pretrained_frac10/20260723_232556",
+  "duration_seconds": 959.8911371231079,
+  "final_metrics": {
+    "accuracy": 0.5461716937354988,
+    "f1_macro": 0.46580147071138384,
+    "f1_weighted": 0.5407357830838921,
+    "best_f1_macro": 0.5053731322543137
+  },
+  "config": {
+    "model": {
+      "backbone": "resnet18",
+      "use_pretrained": true,
+      "num_classes": 7,
+      "dropout": 0.0,
+      "n_parameters": 11180103
+    },
+    "training": {
+      "epochs": 100,
+      "batch_size": 32,
+      "lr": 0.001,
+      "weight_decay": 0.05,
+      "optimizer": "adamw",
+      "scheduler": "warmup_cosine",
+      "use_augmentation": false,
+      "use_class_weights": false,
+      "label_smoothing": 0.1,
+      "grad_clip": null,
+      "seed": 42,
+      "data_fraction": 0.1
+    },
+    "data": {
+      "dataset": "fer2013",
+      "train_dir": "../dataset/fer2013/train",
+      "val_dir": "../dataset/fer2013/val",
+      "train_samples": 2438,
+      "val_samples": 4310
+    }
+  }
+}

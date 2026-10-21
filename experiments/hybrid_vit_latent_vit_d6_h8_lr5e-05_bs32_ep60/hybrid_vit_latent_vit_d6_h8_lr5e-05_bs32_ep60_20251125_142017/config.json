@@ -1,0 +1,26 @@
+{
+  "model": {
+    "latent_dim": 512,
+    "seq_len": 18,
+    "model_size": "small",
+    "use_pretrained": true,
+    "freeze_transformer": false,
+    "freeze_stages": null,
+    "use_adapter": false,
+    "adapter_dim": null
+  },
+  "training": {
+    "epochs": 60,
+    "batch_size": 32,
+    "lr": 5e-05,
+    "weight_decay": 0.01,
+    "scheduler": "cosine",
+    "use_class_weights": false,
+    "use_layerwise_lr": true,
+    "seed": 42
+  },
+  "data": {
+    "train_dir": "latents/train",
+    "val_dir": "latents/val"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "model": {
+    "latent_dim": 512,
+    "seq_len": 18,
+    "embed_dim": 512,
+    "depth": 6,
+    "heads": 8,
+    "mlp_dim": 2048,
+    "num_classes": 7,
+    "dropout": 0.3
+  },
+  "training": {
+    "epochs": 60,
+    "batch_size": 64,
+    "lr": 0.0001,
+    "weight_decay": 0.01,
+    "use_class_weights": true,
+    "scheduler": "plateau",
+    "seed": 42,
+    "data_fraction": 0.25
+  },
+  "data": {
+    "train_dir": "latents/train",
+    "val_dir": "latents/val",
+    "train_samples_total": 24399,
+    "train_samples_used": 6097,
+    "val_samples": 4310
+  }
+}

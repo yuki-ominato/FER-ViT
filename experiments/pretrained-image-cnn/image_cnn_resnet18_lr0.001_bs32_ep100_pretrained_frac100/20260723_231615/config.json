@@ -1,0 +1,30 @@
+{
+  "model": {
+    "backbone": "resnet18",
+    "use_pretrained": true,
+    "num_classes": 7,
+    "dropout": 0.0,
+    "n_parameters": 11180103
+  },
+  "training": {
+    "epochs": 100,
+    "batch_size": 32,
+    "lr": 0.001,
+    "weight_decay": 0.05,
+    "optimizer": "adamw",
+    "scheduler": "warmup_cosine",
+    "use_augmentation": false,
+    "use_class_weights": false,
+    "label_smoothing": 0.1,
+    "grad_clip": null,
+    "seed": 42,
+    "data_fraction": 1.0
+  },
+  "data": {
+    "dataset": "raf-db",
+    "train_dir": "../dataset/RAF-DB",
+    "val_dir": "../dataset/RAF-DB",
+    "train_samples": 12271,
+    "val_samples": 3068
+  }
+}
