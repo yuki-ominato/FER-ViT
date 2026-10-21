@@ -1,0 +1,8 @@
+# 1. 既存プロセスを停止
+pkill -f tensorboard
+
+# 2. 正確なログディレクトリで起動 (conda run -n fer-vitはconda環境外から起動するためのオプション)
+conda run -n fer-vit tensorboard --logdir experiments/latent_vit_d6_h8_lr0.0001_bs8_ep2/latent_vit_d6_h8_lr0.0001_bs8_ep2_20251021_114148/logs --port 6006
+
+# 3. ブラウザでアクセス
+# http://localhost:6006
