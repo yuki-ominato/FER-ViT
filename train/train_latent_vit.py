@@ -25,6 +25,7 @@ if project_root not in sys.path:
 from data.latent_dataset import LatentFERDataset, get_latent_train_transforms, get_latent_val_transforms
 from models_fer_vit.latent_vit import LatentViT
 from utils.experiment_logger import ExperimentLogger, create_experiment_name
+from afs.provenance import git_info, read_latent_provenance
 
 
 def set_seed(seed: int = 42) -> None:
@@ -295,7 +296,12 @@ def main(args):
             'train_samples_total': len(train_ds_full),
             'train_samples_used': len(train_ds),
             'val_samples': len(val_ds),
+            # latent の作成元（エンコーダ・抽出器）。provenance.json が無い旧データは None
+            'train_provenance': read_latent_provenance(args.latent_train_dir),
+            'val_provenance': read_latent_provenance(args.latent_val_dir),
         },
+        'command': ' '.join(sys.argv),
+        'git': git_info(),
     }
     
     # 実験ロガー初期化

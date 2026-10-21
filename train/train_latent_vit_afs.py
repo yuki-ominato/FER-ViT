@@ -37,6 +37,7 @@ from data.latent_dataset import (
 )
 from models_fer_vit.latent_vit import LatentViT
 from afs.style_extractor import StyleExtractor
+from afs.provenance import describe_extractor_checkpoint, git_info, read_latent_provenance
 from utils.experiment_logger import ExperimentLogger, create_experiment_name
 
 
@@ -278,7 +279,12 @@ def main(args):
         data=dict(
             train_dir=args.latent_train_dir, val_dir=args.latent_val_dir,
             train_samples=len(train_ds), val_samples=len(val_ds),
+            train_provenance=read_latent_provenance(args.latent_train_dir),
+            val_provenance=read_latent_provenance(args.latent_val_dir),
         ),
+        style_extractor=describe_extractor_checkpoint(args.style_extractor_path),
+        command=' '.join(sys.argv),
+        git=git_info(),
     )
     base_name = create_experiment_name(model_config, training_config, is_latent=True)
     logger = ExperimentLogger(f"{base_name}_afs_frac{int(args.data_fraction*100)}",

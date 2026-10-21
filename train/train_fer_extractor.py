@@ -89,6 +89,7 @@ if _PSP_ROOT not in sys.path:
 
 from afs import StyleExtractor, PairLatentDataset
 from afs.fer_losses import AFSFERLoss
+from afs.provenance import EXTRACTOR_FER, make_extractor_provenance
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +304,8 @@ def parse_args() -> argparse.Namespace:
                         "fer_image_ckpt 未指定時は無効）")
 
     p.add_argument("--device",          default="cuda")
+    p.add_argument("--run_id",          default=None,
+                   help="出力サブディレクトリ名（省略時はタイムスタンプ）。実行スクリプトから後段に渡すために使う")
     return p.parse_args()
 
 
@@ -311,13 +314,18 @@ def main() -> None:
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    run_id  = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id  = args.run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = os.path.join(args.out_dir, run_id)
     ckpt_dir = os.path.join(out_dir, "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
 
+    # 作成元をチェックポイントにも埋め込み、run ディレクトリから切り離されても辿れるようにする
+    provenance = make_extractor_provenance(EXTRACTOR_FER, args, out_dir)
+
     with open(os.path.join(out_dir, "config.json"), "w") as f:
-        json.dump(vars(args), f, indent=2)
+        json.dump({**vars(args), "extractor_type": EXTRACTOR_FER}, f, indent=2)
+    with open(os.path.join(out_dir, "provenance.json"), "w") as f:
+        json.dump(provenance, f, indent=2, ensure_ascii=False)
 
     # --- Generator（オプション）---
     generator = face_pool = None
@@ -438,6 +446,7 @@ def main() -> None:
             "classifier_state": criterion.classifier.state_dict(),
             "optimizer_state":  optimizer.state_dict(),
             monitor_key:        monitor_loss,
+            "provenance":       provenance,
         }
         torch.save(ckpt, last_model_path)
 

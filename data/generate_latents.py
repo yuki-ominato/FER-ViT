@@ -24,6 +24,7 @@ if project_root not in sys.path:
 # ここでは project_root のみを追加すれば十分。
 
 from models_fer_vit.encoder_wrapper import EncoderWrapper
+from afs.provenance import check_output_dir, git_info, now, write_latent_provenance
 
 
 CLASS_TO_LABEL = {
@@ -156,6 +157,15 @@ def collect_samples_rafdb(data_root: str, split: str, csv_path: str = None):
 
 
 def main(args):
+    # 既存の出力が別エンコーダ・別データ由来なら書き込まない（途中再開は許可）
+    source = {
+        'encoder_type': args.encoder_type,
+        'encoder_model': os.path.abspath(args.encoder_model),
+        'dataset_type': args.dataset_type,
+        'data_root': os.path.abspath(args.data_root),
+        'split': args.split if args.dataset_type == 'raf-db' else None,
+    }
+    check_output_dir(args.latent_out, source)
     os.makedirs(args.latent_out, exist_ok=True)
     encoder = EncoderWrapper(args.encoder_model, device="cuda", encoder_type=args.encoder_type)
 
@@ -202,6 +212,15 @@ def main(args):
             process_images_batch(encoder, image_paths, labels, output_paths, args.batch_size)
             total_processed += len(image_paths)
             pbar.update(len(image_paths))
+
+    write_latent_provenance(args.latent_out, {
+        'kind': 'encoded_latents',
+        **source,
+        'n_files': sum(f.endswith('.pt') for f in os.listdir(args.latent_out)),
+        'created_at': now(),
+        'command': ' '.join(sys.argv),
+        'git': git_info(),
+    })
 
     print(f"\nProcessing completed!")
     print(f"Total processed: {total_processed}")

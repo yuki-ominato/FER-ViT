@@ -44,6 +44,14 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from afs.style_extractor import StyleExtractor
+from afs.provenance import (
+    check_output_dir,
+    describe_extractor_checkpoint,
+    git_info,
+    now,
+    read_latent_provenance,
+    write_latent_provenance,
+)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -85,14 +93,15 @@ def collate_fn(batch):
 # StyleExtractor のロード
 # ──────────────────────────────────────────────────────────────────────────────
 
-def load_style_extractor(ckpt_path: str, device: torch.device) -> StyleExtractor:
+def load_style_extractor(ckpt_path: str, device: torch.device):
+    """StyleExtractor と、その作成元の記述（provenance）を返す"""
     ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
     h = StyleExtractor()
     h.load_state_dict(ckpt['model_state'])
     h.eval()
     for p in h.parameters():
         p.requires_grad_(False)
-    return h.to(device)
+    return h.to(device), describe_extractor_checkpoint(ckpt_path, ckpt)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -120,7 +129,9 @@ def run(args):
 
     # StyleExtractor
     print(f"StyleExtractor をロード: {args.style_extractor_path}")
-    h = load_style_extractor(args.style_extractor_path, device)
+    h, extractor_desc = load_style_extractor(args.style_extractor_path, device)
+    print(f"  抽出器の種類: {extractor_desc['extractor_type']} "
+          f"(記録元: {extractor_desc['provenance_source']}, epoch={extractor_desc['checkpoint_epoch']})")
 
     # データセット
     dataset = LatentFileDataset(args.latent_dir)
@@ -134,7 +145,15 @@ def run(args):
     )
     print(f"入力: {args.latent_dir}  ({len(dataset)} ファイル)")
 
-    # 出力ディレクトリ
+    # 出力ディレクトリ（作成元の異なる .pt が混ざらないよう、書き込み前に確認する）
+    input_dir = os.path.abspath(args.latent_dir)
+    for component in (['style', 'identity'] if args.mode == 'both' else [args.mode]):
+        out_d = os.path.join(args.out_dir, component) if args.mode == 'both' else args.out_dir
+        check_output_dir(out_d, {
+            'component': component,
+            'input_latent_dir': input_dir,
+            'extractor_sha256': extractor_desc['checkpoint_sha256'],
+        })
     out_dirs = prepare_out_dirs(args.out_dir, args.mode)
     for k, d in out_dirs.items():
         print(f"出力 [{k}]: {d}")
@@ -163,6 +182,22 @@ def run(args):
                 )
 
         saved += len(fnames)
+
+    # 作成元の記録: どの抽出器・どの入力 latent から、どの成分を取り出したか
+    for component, out_d in out_dirs.items():
+        write_latent_provenance(out_d, {
+            'kind': 'extracted_latents',
+            'component': component,   # style: h(w) / identity: w - h(w)
+            'input_latent_dir': input_dir,
+            'input_provenance': read_latent_provenance(input_dir),
+            'extractor_type': extractor_desc['extractor_type'],
+            'extractor_sha256': extractor_desc['checkpoint_sha256'],
+            'extractor': extractor_desc,
+            'n_files': saved,
+            'created_at': now(),
+            'command': ' '.join(sys.argv),
+            'git': git_info(),
+        })
 
     print(f"\n完了: {saved} ファイルを変換・保存しました。")
     if args.mode == 'both':

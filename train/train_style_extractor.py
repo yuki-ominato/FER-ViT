@@ -42,6 +42,7 @@ if _PSP_ROOT not in sys.path:
 from afs import StyleExtractor, PairLatentDataset
 from afs.losses import AFSLoss
 from afs.image_provider import DiskImageProvider, GeneratedImageProvider
+from afs.provenance import EXTRACTOR_PAPER, make_extractor_provenance
 
 
 # ------------------------------------------------------------------------------
@@ -212,6 +213,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lambda_cons",  type=float, default=0.1,
                    help="Weight for consistency loss (論文: 0.1)")
     p.add_argument("--device",       default="cuda")
+    p.add_argument("--run_id",       default=None,
+                   help="出力サブディレクトリ名（省略時はタイムスタンプ）。実行スクリプトから後段に渡すために使う")
     return p.parse_args()
 
 
@@ -220,14 +223,19 @@ def main() -> None:
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id = args.run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = os.path.join(args.out_dir, run_id)
     ckpt_dir = os.path.join(out_dir, "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
 
+    # 作成元をチェックポイントにも埋め込み、run ディレクトリから切り離されても辿れるようにする
+    provenance = make_extractor_provenance(EXTRACTOR_PAPER, args, out_dir)
+
     # Save config
     with open(os.path.join(out_dir, "config.json"), "w") as f:
-        json.dump(vars(args), f, indent=2)
+        json.dump({**vars(args), "extractor_type": EXTRACTOR_PAPER}, f, indent=2)
+    with open(os.path.join(out_dir, "provenance.json"), "w") as f:
+        json.dump(provenance, f, indent=2, ensure_ascii=False)
 
     # --- Models ---
     generator, face_pool = load_generator(args.psp_path, device)
@@ -330,6 +338,7 @@ def main() -> None:
             "model_state": h.state_dict(),
             "optimizer_state": optimizer.state_dict(),
             monitor_key: monitor_loss,
+            "provenance": provenance,
         }
 
         # last_model は毎エポック上書き
