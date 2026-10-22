@@ -4,7 +4,8 @@ experiments/ 以下の全 run（config.json を持つディレクトリ）を走
 
 読み取る情報:
     config.json             : 学習スクリプトが保存した設定（model / training / data）
-    experiment_summary.json : 学習終了時の final_metrics（最終エポックの val 指標と best_f1_macro）
+    experiment_summary.json : 学習終了時の final_metrics（最終エポックの val 指標と best_f1_macro、
+                              holdout 分割を使った run は best モデルでの test_* 指標）
     logs/ (TensorBoard)     : val_acc / val_f1 の最良値とそのエポック（logs が残っている run のみ）
     train_log.json          : AFS StyleExtractor 学習 run の最終エポック損失
 
@@ -116,12 +117,16 @@ def main():
                 if first(c, "training.svm_basis", "training.pca_basis") else "",
                 "basis": first(c, "training.svm_basis", "training.pca_basis"),
                 "style_extractor": first(c, "training.style_extractor_path"),
+                "val_source": first(c, "data.val_source"),
+                "holdout_split": first(c, "data.holdout_split"),
+                "layer_mix": f'{c.get("training.layer_mix_keep")}@{c.get("training.layer_mix_prob")}'
+                if c.get("training.layer_mix_prob") else "",
             }
             summ = os.path.join(run_dir, "experiment_summary.json")
             if os.path.exists(summ):
                 s = json.load(open(summ))
                 fm = s.get("final_metrics") or {}
-                for k in ("accuracy", "f1_macro", "best_f1_macro"):
+                for k in ("accuracy", "f1_macro", "best_f1_macro", "test_accuracy", "test_f1_macro"):
                     if isinstance(fm.get(k), float):
                         row[f"final_{k}"] = round(fm[k], 4)
                 if s.get("duration_seconds"):

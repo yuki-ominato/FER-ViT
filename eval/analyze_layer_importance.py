@@ -28,6 +28,7 @@ if project_root not in sys.path:
 
 from data.latent_dataset import LatentFERDataset
 from eval.evaluate_model import load_model
+from data.holdout_split import load_split
 
 
 # LEAM可視化と同じ層グルーピング（0-3: 構造, 4-11: 表情, 12-17: テクスチャ）
@@ -80,7 +81,7 @@ def analyze_layer_importance(model, latents, labels, device, batch_size, ablatio
         layer_conf.append(conf)
 
         print(
-            f"Layer {layer_idx + 1:2d}/{seq_len}: "
+            f"Layer {layer_idx:2d}: "
             f"acc={acc:.4f} (drop={baseline_acc - acc:+.4f}), "
             f"true-class prob={conf:.4f} (drop={baseline_conf - conf:+.4f})"
         )
@@ -108,18 +109,18 @@ def plot_layer_importance(results: dict, save_path: str):
     ax1.grid(axis="y", alpha=0.3)
 
     patches = [
-        mpatches.Patch(color="#e74c3c", label="Coarse (layers 1-4: structure)"),
-        mpatches.Patch(color="#2ecc71", label="Medium (layers 5-12: expression)"),
-        mpatches.Patch(color="#3498db", label="Fine (layers 13-18: texture)"),
+        mpatches.Patch(color="#e74c3c", label="Coarse (layers 0-3: structure)"),
+        mpatches.Patch(color="#2ecc71", label="Medium (layers 4-11: expression)"),
+        mpatches.Patch(color="#3498db", label="Fine (layers 12-17: texture)"),
     ]
     ax1.legend(handles=patches, loc="upper right")
 
     ax2.bar(range(seq_len), results["layer_true_class_prob_drop"], color=colors)
     ax2.axhline(y=0, color="black", linewidth=0.8)
-    ax2.set_xlabel("StyleGAN Layer Index (w+)")
+    ax2.set_xlabel("StyleGAN Layer Index (w+, 0-based)")
     ax2.set_ylabel("True-Class Prob. Drop")
     ax2.set_xticks(range(seq_len))
-    ax2.set_xticklabels([str(i + 1) for i in range(seq_len)])
+    ax2.set_xticklabels([str(i) for i in range(seq_len)])
     ax2.grid(axis="y", alpha=0.3)
 
     plt.tight_layout()
@@ -133,7 +134,11 @@ def main():
         description="w+ の各層(18層)をアブレーションし、精度低下量から層重要度を分析する"
     )
     parser.add_argument("--checkpoint_path", required=True, help="Path to model checkpoint")
-    parser.add_argument("--latent_test_dir", required=True, help="Path to test latent files")
+    parser.add_argument("--latent_test_dir", required=True,
+                         help="Path to latent files（--holdout_split 指定時は分割元の train latent）")
+    parser.add_argument("--holdout_split", default=None,
+                         help="data/holdout_split.py の分割 JSON。指定すると holdout 部分だけで分析する"
+                              "（層の選択などに使う結果は test でなくこちらで測る）")
     parser.add_argument("--output_dir", default="eval_results/layer_importance",
                          help="Output directory for results")
     parser.add_argument("--device", default="cuda", help="Device to use")
@@ -156,7 +161,8 @@ def main():
     print("\n" + "=" * 60)
     print("Loading test dataset...")
     print("=" * 60)
-    dataset = LatentFERDataset(args.latent_test_dir)
+    files = load_split(args.holdout_split)['val_files'] if args.holdout_split else None
+    dataset = LatentFERDataset(args.latent_test_dir, files=files)
     loader = DataLoader(dataset, batch_size=len(dataset), shuffle=False, num_workers=4)
     latents, labels = next(iter(loader))
     print(f"Test dataset size: {len(dataset)}")
@@ -169,7 +175,7 @@ def main():
     print(f"\nBaseline accuracy: {results['baseline_accuracy']:.4f}")
     most_important = max(range(len(results['layer_accuracy_drop'])),
                           key=lambda i: results['layer_accuracy_drop'][i])
-    print(f"Most important layer (by accuracy drop): layer {most_important + 1} "
+    print(f"Most important layer (by accuracy drop): layer {most_important} "
           f"(drop={results['layer_accuracy_drop'][most_important]:+.4f})")
 
     plot_layer_importance(results, os.path.join(args.output_dir, "layer_importance.png"))
@@ -177,6 +183,9 @@ def main():
     results_out = dict(results)
     results_out["ablation_mode"] = args.ablation
     results_out["checkpoint_path"] = args.checkpoint_path
+    results_out["latent_dir"] = args.latent_test_dir
+    results_out["holdout_split"] = os.path.abspath(args.holdout_split) if args.holdout_split else None
+    results_out["layer_index_base"] = 0  # 層番号は JSON・図・ログとも 0 始まり
     results_out["model_config"] = model_config
     results_path = os.path.join(args.output_dir, "layer_importance.json")
     with open(results_path, "w") as f:

@@ -57,15 +57,19 @@ class LatentFERDataset(Dataset):
     def __init__(
         self, 
         latent_dir: str, 
-        transform: Optional[Callable] = None
+        transform: Optional[Callable] = None,
+        files: Optional[list] = None
     ):
         """
         Args:
             latent_dir: 潜在コードファイルが保存されているディレクトリ
             transform: 潜在コードへの変換処理 (LatentAugmentなど)
+            files: 使用するファイル名のリスト（None なら全 .pt）。
+                   data/holdout_split.py の分割を適用するときに使う
         """
         self.latent_dir = latent_dir
         self.transform = transform
+        self.files = None if files is None else set(files)
         self.samples = self._load_samples()
         
     def _load_samples(self) -> list:
@@ -77,12 +81,15 @@ class LatentFERDataset(Dataset):
         
         # .ptファイルをすべて取得
         for filename in sorted(os.listdir(self.latent_dir)):
-            if filename.endswith('.pt'):
+            if filename.endswith('.pt') and (self.files is None or filename in self.files):
                 filepath = os.path.join(self.latent_dir, filename)
                 samples.append(filepath)
         
         if not samples:
             raise ValueError(f"No .pt files found in {self.latent_dir}")
+        if self.files is not None and len(samples) != len(self.files):
+            raise ValueError(f"{len(self.files) - len(samples)} files of the split are missing "
+                             f"in {self.latent_dir}")
         
         print(f"Loaded {len(samples)} latent samples from {self.latent_dir}")
         return samples

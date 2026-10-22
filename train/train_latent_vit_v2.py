@@ -7,6 +7,7 @@ import os
 import sys
 import argparse
 import json
+import copy
 from collections import Counter
 
 import torch
@@ -25,6 +26,7 @@ from data.latent_dataset import LatentFERDataset, get_latent_train_transforms, g
 from models_fer_vit.latent_vit_v2 import LatentViTv2
 from utils.experiment_logger import ExperimentLogger, create_experiment_name
 from afs.provenance import git_info, read_latent_provenance
+from data.holdout_split import load_split
 
 
 class SVMProjector:
@@ -89,6 +91,55 @@ class PCAProjector(SVMProjector):
         mode       : "emotion" → 感情成分, "residual" → 非感情成分。
         device     : 射影を実行するデバイス。
     """
+
+
+def parse_layers(spec: str, seq_len: int = 18) -> list:
+    """'4-11' や '4,5,9' や '0-3,12-17' を層番号（0 始まり）のリストに変換する"""
+    layers = set()
+    for part in spec.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        if '-' in part:
+            lo, hi = (int(x) for x in part.split('-'))
+            layers.update(range(lo, hi + 1))
+        else:
+            layers.add(int(part))
+    if not layers or min(layers) < 0 or max(layers) >= seq_len:
+        raise ValueError(f"layer spec '{spec}' must select layers within 0-{seq_len - 1}")
+    return sorted(layers)
+
+
+class LayerMix:
+    """
+    表情に効く層は残し、それ以外の層をバッチ内の別サンプルのものに入れ替える拡張（style mixing）。
+
+    層重要度分析で、表情の情報は中間層（0 始まりで 4-11）に集中し、
+    粗い層（0-3: 顔の向き・輪郭）と細かい層（12-17: 色・質感）を潰しても精度がほぼ変わらなかった。
+    そこで keep 以外の層を他人のものに差し替え、「表情は同じで人物・向き・色が違う」サンプルを作る。
+    ラベルは元サンプルのものをそのまま使う（入れ替え先のクラスは問わない）。
+
+    Args:
+        keep_layers : 元サンプルから残す層（0 始まり）。
+        prob        : 各サンプルに適用する確率。
+    """
+
+    def __init__(self, keep_layers: list, prob: float, seq_len: int) -> None:
+        swap = torch.ones(seq_len, dtype=torch.bool)
+        swap[keep_layers] = False
+        self.swap = swap
+        self.prob = prob
+
+    @torch.no_grad()
+    def __call__(self, latents: torch.Tensor) -> torch.Tensor:
+        B = latents.size(0)
+        # 自分自身と組まないよう、ランダム順に並べて 1 つ隣のサンプルを相手にする
+        perm = torch.randperm(B, device=latents.device)
+        partner = torch.empty_like(perm)
+        partner[perm] = perm.roll(1)
+        apply = torch.rand(B, device=latents.device) < self.prob
+        mask = apply[:, None] & self.swap.to(latents.device)[None, :]   # (B, S)
+        return torch.where(mask[..., None], latents[partner], latents)
 
 
 def set_seed(seed: int = 42) -> None:
@@ -169,7 +220,7 @@ def calculate_class_weights(dataset) -> torch.Tensor:
     return torch.FloatTensor(weights)
 
 
-def train_epoch(model, loader, optimizer, criterion, device, args, projector=None):
+def train_epoch(model, loader, optimizer, criterion, device, args, projector=None, layer_mix=None):
     """1エポックの学習（損失、精度、F1スコアを返す）"""
     model.train()
     total_loss = 0.0
@@ -179,6 +230,10 @@ def train_epoch(model, loader, optimizer, criterion, device, args, projector=Non
     for latents, labels in loader:
         latents = latents.to(device)
         labels = labels.to(device)
+
+        # 層の入れ替え拡張（射影より前に、元の W+ 上で行う）
+        if layer_mix is not None:
+            latents = layer_mix(latents)
 
         # SVM 射影（オンザフライ）
         if projector is not None:
@@ -274,8 +329,18 @@ def main(args):
 
     val_transform = get_latent_val_transforms()
 
-    train_ds_full = LatentFERDataset(args.latent_train_dir, transform=train_transform)
-    val_ds = LatentFERDataset(args.latent_val_dir, transform=val_transform)
+    # --holdout_split 指定時: train を分割して検証用を作り、--latent_val_dir は最後に 1 度だけ評価する test にする
+    split = load_split(args.holdout_split) if args.holdout_split else None
+    if split is not None:
+        train_ds_full = LatentFERDataset(args.latent_train_dir, transform=train_transform,
+                                         files=split['train_files'])
+        val_ds = LatentFERDataset(args.latent_train_dir, transform=val_transform,
+                                  files=split['val_files'])
+        test_ds = LatentFERDataset(args.latent_val_dir, transform=val_transform)
+    else:
+        train_ds_full = LatentFERDataset(args.latent_train_dir, transform=train_transform)
+        val_ds = LatentFERDataset(args.latent_val_dir, transform=val_transform)
+        test_ds = None
 
     # データセット削減
     if args.data_fraction < 1.0:
@@ -289,6 +354,10 @@ def main(args):
                               num_workers=4, pin_memory=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
                             num_workers=4, pin_memory=True)
+    test_loader = None
+    if test_ds is not None:
+        test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False,
+                                 num_workers=4, pin_memory=True)
 
     # seq_len を自動推定
     if args.seq_len <= 0:
@@ -332,6 +401,12 @@ def main(args):
     elif args.pca_basis is not None:
         projector = PCAProjector(args.pca_basis, args.pca_projection, device)
         print(f"\nPCA projection enabled: mode={args.pca_projection}")
+
+    layer_mix = None
+    if args.layer_mix_prob > 0:
+        keep_layers = parse_layers(args.layer_mix_keep, args.seq_len)
+        layer_mix = LayerMix(keep_layers, args.layer_mix_prob, args.seq_len)
+        print(f"\nLayerMix enabled: keep={keep_layers}, prob={args.layer_mix_prob}")
 
     # クラス重み計算
     if args.use_class_weights:
@@ -382,6 +457,8 @@ def main(args):
         'svm_projection': args.svm_projection if args.svm_basis is not None else None,
         'pca_basis': args.pca_basis,
         'pca_projection': args.pca_projection if args.pca_basis is not None else None,
+        'layer_mix_prob': args.layer_mix_prob,
+        'layer_mix_keep': args.layer_mix_keep if args.layer_mix_prob > 0 else None,
     }
 
     config = {
@@ -393,6 +470,11 @@ def main(args):
             'train_samples_total': len(train_ds_full),
             'train_samples_used': len(train_ds),
             'val_samples': len(val_ds),
+            # holdout 分割を使った場合のみ。val は train から切り出し、test は val_dir
+            'holdout_split': os.path.abspath(args.holdout_split) if split is not None else None,
+            'val_source': 'holdout_of_train' if split is not None else 'val_dir',
+            'test_dir': args.latent_val_dir if split is not None else None,
+            'test_samples': len(test_ds) if test_ds is not None else None,
             # latent の作成元（エンコーダ・抽出器）。provenance.json が無い旧データは None
             'train_provenance': read_latent_provenance(args.latent_train_dir),
             'val_provenance': read_latent_provenance(args.latent_val_dir),
@@ -417,6 +499,7 @@ def main(args):
     print("=" * 60)
 
     best_f1 = 0.0
+    best_state = None
 
     for epoch in range(1, args.epochs + 1):
         train_loss, train_acc, train_f1 = train_epoch(
@@ -450,6 +533,7 @@ def main(args):
         is_best = val_f1 > best_f1
         if is_best:
             best_f1 = val_f1
+            best_state = copy.deepcopy(model.state_dict())
             print(f"  → Best model (F1: {best_f1:.4f})")
             logger.save_checkpoint(model, optimizer, epoch, val_results, is_best)
 
@@ -482,6 +566,20 @@ def main(args):
         'best_f1_macro': best_f1,
         'data_fraction': args.data_fraction,
     }
+
+    # test は holdout val で選んだ best モデルで 1 度だけ評価する（test を選択に使わない）
+    if test_loader is not None and best_state is not None:
+        model.load_state_dict(best_state)
+        test_results = evaluate(model, test_loader, criterion, device, projector=projector)
+        print(f"\nTest (best-on-holdout model): acc={test_results['accuracy']:.4f} "
+              f"f1_macro={test_results['f1_macro']:.4f}")
+        print(classification_report(test_results['labels'], test_results['predictions'],
+                                    target_names=emotion_names, zero_division=0))
+        final_metrics.update({
+            'test_accuracy': test_results['accuracy'],
+            'test_f1_macro': test_results['f1_macro'],
+            'test_f1_weighted': test_results['f1_weighted'],
+        })
     logger.log_experiment_summary(final_metrics)
     logger.close()
 
@@ -493,12 +591,20 @@ if __name__ == "__main__":
 
     # データ関連
     parser.add_argument("--latent_train_dir", required=True)
-    parser.add_argument("--latent_val_dir", required=True)
+    parser.add_argument("--latent_val_dir", required=True,
+                        help="検証用 latent。--holdout_split 指定時は最後に 1 度だけ評価する test として扱う")
+    parser.add_argument("--holdout_split", type=str, default=None,
+                        help="data/holdout_split.py で作った分割 JSON。指定すると train から切り出した "
+                             "holdout で best 選択と LR 調整を行う")
     parser.add_argument("--data_fraction", type=float, default=1.0,
                         help="使用する訓練データの割合 (0.0 < fraction <= 1.0)")
     parser.add_argument("--use_augmentation", action="store_true", help="Use data augmentation")
     parser.add_argument("--latent_noise", type=float, default=0.1)
     parser.add_argument("--latent_mask", type=float, default=0.1)
+    parser.add_argument("--layer_mix_prob", type=float, default=0.0,
+                        help="LayerMix（keep 以外の層をバッチ内の別サンプルと入れ替える）を適用する確率（0で無効）")
+    parser.add_argument("--layer_mix_keep", type=str, default="4-11",
+                        help="LayerMix で元サンプルから残す層（0 始まり、例: '4-11', '4-11,13'）")
 
     # 学習設定
     parser.add_argument("--epochs", type=int, default=60)
